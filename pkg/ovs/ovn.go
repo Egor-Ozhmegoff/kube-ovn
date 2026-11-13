@@ -199,6 +199,7 @@ func ovnNBMonitorOptions() []table.MonitorOption {
 		table.WithTable(&ovnnb.LogicalRouterPolicy{}),
 		table.WithTable(&ovnnb.LogicalRouterPort{}),
 		table.WithTable(&ovnnb.LogicalRouterStaticRoute{}),
+		table.WithTable(&ovnnb.StaticMACBinding{}),
 		table.WithTable(&ovnnb.LogicalRouter{}),
 		table.WithTable(&ovnnb.LogicalSwitchPort{}),
 		table.WithTable(&ovnnb.LogicalSwitch{}),

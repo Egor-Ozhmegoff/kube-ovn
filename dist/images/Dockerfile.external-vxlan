@@ -1,0 +1,12 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Reuse the published OVN/OVS, scripts and helpers. Replace every component
+# participating in externalVXLAN API, validation, reconciliation and cleanup.
+COPY kube-ovn kube-ovn-controller kube-ovn-daemon kube-ovn-cmd kube-ovn-ipsec /kube-ovn/
+RUN setcap CAP_NET_ADMIN+eip /usr/bin/ovn-controller && \
+    setcap CAP_NET_BIND_SERVICE+eip /kube-ovn/kube-ovn-cmd && \
+    setcap CAP_NET_RAW,CAP_NET_BIND_SERVICE+eip /kube-ovn/kube-ovn-controller && \
+    setcap CAP_NET_ADMIN,CAP_NET_RAW,CAP_NET_BIND_SERVICE+eip /kube-ovn/kube-ovn-daemon && \
+    test "$(getcap /usr/bin/ovn-controller)" = "/usr/bin/ovn-controller cap_net_admin=eip"
+WORKDIR /kube-ovn

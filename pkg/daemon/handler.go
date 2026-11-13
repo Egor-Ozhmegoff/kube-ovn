@@ -435,6 +435,13 @@ func (csh cniServerHandler) handleAdd(req *restful.Request, resp *restful.Respon
 			}
 			return
 		}
+		if err := csh.validateExternalVXLANAttachment(podSubnet); err != nil {
+			recordFailure("external-vxlan-ingress", err)
+			if writeErr := resp.WriteHeaderAndEntity(http.StatusBadRequest, request.CniResponse{Err: err.Error()}); writeErr != nil {
+				klog.Errorf("failed to write response: %v", writeErr)
+			}
+			return
+		}
 
 		if podSubnet.Status.U2OInterconnectionIP == "" && podSubnet.Spec.U2OInterconnection {
 			errMsg := fmt.Errorf("failed to generate u2o ip on subnet %s", podSubnet.Name)

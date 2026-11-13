@@ -106,6 +106,7 @@ spec:
                 - SYS_NICE
                 - SYS_ADMIN
           env:
+            {{- include "kubeovn.kubernetesAPIEnv" . | nindent 12 }}
             - name: ENABLE_OVN_IPSEC
               value: "{{ .Values.func.ENABLE_OVN_IPSEC }}"
             - name: ENABLE_SSL

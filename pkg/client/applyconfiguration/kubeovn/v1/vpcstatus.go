@@ -21,6 +21,10 @@ package v1
 // VpcStatusApplyConfiguration represents a declarative configuration of the VpcStatus type for use
 // with apply.
 type VpcStatusApplyConfiguration struct {
+	// ExternalVXLAN records managed NB configuration, not dataplane readiness.
+	ExternalVXLAN *bool `json:"externalVXLAN,omitempty"`
+	// ExternalVXLANReadyNodes records Kubernetes-ready ECMP members, not dataplane health.
+	ExternalVXLANReadyNodes []string `json:"externalVXLANReadyNodes,omitempty"`
 	// Conditions represents the latest state of the object
 	Conditions []ConditionApplyConfiguration `json:"conditions,omitempty"`
 	Standby    *bool                         `json:"standby,omitempty"`
@@ -48,6 +52,24 @@ type VpcStatusApplyConfiguration struct {
 // apply.
 func VpcStatus() *VpcStatusApplyConfiguration {
 	return &VpcStatusApplyConfiguration{}
+}
+
+// WithExternalVXLAN sets the ExternalVXLAN field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExternalVXLAN field is set to the value of the last call.
+func (b *VpcStatusApplyConfiguration) WithExternalVXLAN(value bool) *VpcStatusApplyConfiguration {
+	b.ExternalVXLAN = &value
+	return b
+}
+
+// WithExternalVXLANReadyNodes adds the given value to the ExternalVXLANReadyNodes field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ExternalVXLANReadyNodes field.
+func (b *VpcStatusApplyConfiguration) WithExternalVXLANReadyNodes(values ...string) *VpcStatusApplyConfiguration {
+	for i := range values {
+		b.ExternalVXLANReadyNodes = append(b.ExternalVXLANReadyNodes, values[i])
+	}
+	return b
 }
 
 // WithConditions adds the given value to the Conditions field in the declarative configuration

@@ -109,6 +109,9 @@ type SubnetSpecApplyConfiguration struct {
 	NamespaceSelectors []metav1.LabelSelectorApplyConfiguration `json:"namespaceSelectors,omitempty"`
 	// Node network name for underlay.
 	NodeNetwork *string `json:"nodeNetwork,omitempty"`
+	// ExternalVXLAN extends this routed logical switch to static external VTEPs.
+	// The distributed OVN gateway remains the subnet's gateway on every chassis.
+	ExternalVXLAN *ExternalVXLANApplyConfiguration `json:"externalVXLAN,omitempty"`
 }
 
 // SubnetSpecApplyConfiguration constructs a declarative configuration of the SubnetSpec type for use with
@@ -478,5 +481,13 @@ func (b *SubnetSpecApplyConfiguration) WithNamespaceSelectors(values ...*metav1.
 // If called multiple times, the NodeNetwork field is set to the value of the last call.
 func (b *SubnetSpecApplyConfiguration) WithNodeNetwork(value string) *SubnetSpecApplyConfiguration {
 	b.NodeNetwork = &value
+	return b
+}
+
+// WithExternalVXLAN sets the ExternalVXLAN field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExternalVXLAN field is set to the value of the last call.
+func (b *SubnetSpecApplyConfiguration) WithExternalVXLAN(value *ExternalVXLANApplyConfiguration) *SubnetSpecApplyConfiguration {
+	b.ExternalVXLAN = value
 	return b
 }

@@ -32,6 +32,10 @@ RUN ln -s /kube-ovn/kube-ovn-cmd /kube-ovn/kube-ovn-monitor && \
 
 FROM kubeovn/kube-ovn-base:$BASE_TAG
 
+# Native EVPN exchanges FDB and neighbor entries through Netlink as nobody.
+RUN setcap CAP_NET_ADMIN+eip /usr/bin/ovn-controller && \
+    test "$(getcap /usr/bin/ovn-controller)" = "/usr/bin/ovn-controller cap_net_admin=eip"
+
 COPY --chmod=0644 logrotate/* /etc/logrotate.d/
 COPY grace_stop_ovn_controller /usr/share/ovn/scripts/grace_stop_ovn_controller
 COPY --chmod=0644 THIRD-PARTY-NOTICES /usr/share/doc/kube-ovn/THIRD-PARTY-NOTICES

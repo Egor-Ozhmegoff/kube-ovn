@@ -360,6 +360,7 @@ rules:
       - subnets
       - vlans
       - provider-networks
+      - vpcs
     verbs:
       - get
       - list

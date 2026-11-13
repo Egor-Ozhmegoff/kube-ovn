@@ -1,0 +1,332 @@
+---
+suite: Direct Kubernetes API endpoint
+templates:
+- controller-deploy.yaml
+- ovncni-ds.yaml
+- central-deploy.yaml
+- ovsovn-ds.yaml
+- ic-controller-deploy.yaml
+- pinger-ds.yaml
+- post-delete-hook.yaml
+tests:
+- it: preserves in-cluster discovery by default
+  set:
+    MASTER_NODES: 10.0.0.1
+    func.ENABLE_IC: true
+    func.ENABLE_OVN_IPSEC: false
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: controller-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: controller-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: ovncni-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: ovncni-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: central-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: central-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: ovsovn-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: ovsovn-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: ic-controller-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: ic-controller-deploy.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: pinger-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: pinger-ds.yaml
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: post-delete-hook.yaml
+    documentSelector:
+      path: kind
+      value: Job
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: post-delete-hook.yaml
+    documentSelector:
+      path: kind
+      value: Job
+  - notContains:
+      path: spec.template.spec.initContainers[2].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+    template: ovncni-ds.yaml
+  - notContains:
+      path: spec.template.spec.initContainers[2].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+    template: ovncni-ds.yaml
+- it: overrides API endpoint for API clients including cleanup and delete hook
+  set:
+    MASTER_NODES: 10.0.0.1
+    func.ENABLE_IC: true
+    func.ENABLE_OVN_IPSEC: false
+    networking.API_SERVER_HOST: api.example.test
+    networking.API_SERVER_PORT: 7443
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: controller-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: controller-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: ovncni-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: ovncni-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: central-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: central-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: ovsovn-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: ovsovn-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: ic-controller-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: ic-controller-deploy.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: pinger-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: pinger-ds.yaml
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: post-delete-hook.yaml
+    documentSelector:
+      path: kind
+      value: Job
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: post-delete-hook.yaml
+    documentSelector:
+      path: kind
+      value: Job
+  - contains:
+      path: spec.template.spec.initContainers[2].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+      any: true
+    template: ovncni-ds.yaml
+  - contains:
+      path: spec.template.spec.initContainers[2].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '7443'
+      any: true
+    template: ovncni-ds.yaml
+- it: defaults to 6443 for a configured IPv4 host
+  template: controller-deploy.yaml
+  set:
+    MASTER_NODES: 10.0.0.1
+    networking.API_SERVER_HOST: 192.0.2.10
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: 192.0.2.10
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '6443'
+- it: defaults an explicitly empty port
+  template: controller-deploy.yaml
+  set:
+    MASTER_NODES: 10.0.0.1
+    networking.API_SERVER_HOST: api.example.test
+    networking.API_SERVER_PORT: ''
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '6443'
+- it: accepts a bare IPv6 API address
+  template: controller-deploy.yaml
+  set:
+    MASTER_NODES: 10.0.0.1
+    networking.API_SERVER_HOST: 2001:db8::10
+    networking.API_SERVER_PORT: '6443'
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: 2001:db8::10
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '6443'
+- it: does not override discovery when only the port is set
+  template: controller-deploy.yaml
+  set:
+    MASTER_NODES: 10.0.0.1
+    networking.API_SERVER_PORT: '7443'
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+      any: true
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+      any: true
+- it: overrides the active IPsec sidecar as well as cni-server
+  template: ovncni-ds.yaml
+  set:
+    MASTER_NODES: 10.0.0.1
+    func.ENABLE_OVN_IPSEC: true
+    func.ENABLE_TPROXY: false
+    networking.API_SERVER_HOST: api.example.test
+  asserts:
+  - equal:
+      path: spec.template.spec.containers[1].name
+      value: ipsec
+  - contains:
+      path: spec.template.spec.containers[1].env
+      content:
+        name: KUBERNETES_SERVICE_HOST
+        value: api.example.test
+  - contains:
+      path: spec.template.spec.containers[1].env
+      content:
+        name: KUBERNETES_SERVICE_PORT
+        value: '6443'

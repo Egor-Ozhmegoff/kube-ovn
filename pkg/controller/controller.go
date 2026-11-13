@@ -1332,6 +1332,7 @@ func (c *Controller) Run(ctx context.Context) {
 		}, 30*time.Second)
 	}
 	c.startWorkers(ctx)
+	go wait.UntilWithContext(ctx, func(context.Context) { c.resyncExternalVXLAN() }, 30*time.Second)
 	go wait.UntilWithContext(ctx, func(ctx context.Context) {
 		operationCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()

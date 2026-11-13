@@ -81,6 +81,9 @@ type VpcSpec struct {
 	// optional BFD LRP configuration
 	// currently the LRP is used for vpc external gateway only
 	BFDPort *BFDPort `json:"bfdPort"`
+	// ExternalVXLAN connects this router to a native external L3 VXLAN domain.
+	// +optional
+	ExternalVXLAN *ExternalVXLANGateway `json:"externalVXLAN,omitempty"`
 }
 
 type BFDPort struct {
@@ -143,6 +146,11 @@ func (s *BFDPortStatus) Clear() {
 }
 
 type VpcStatus struct {
+	// ExternalVXLAN records managed NB configuration, not dataplane readiness.
+	ExternalVXLAN bool `json:"externalVXLAN,omitempty"`
+	// ExternalVXLANReadyNodes records Kubernetes-ready ECMP members, not dataplane health.
+	// +listType=set
+	ExternalVXLANReadyNodes []string `json:"externalVXLANReadyNodes,omitempty"`
 	// Conditions represents the latest state of the object
 	// +optional
 	// +patchMergeKey=type

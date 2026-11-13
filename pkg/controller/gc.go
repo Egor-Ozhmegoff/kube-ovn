@@ -173,6 +173,11 @@ func (c *Controller) gcLogicalSwitch() error {
 	klog.Infof("logical switch in ovn: %v", lss)
 	klog.Infof("subnet in kubernetes: %v", subnetNames)
 	for _, ls := range lss {
+		if after, ok := strings.CutPrefix(ls, "evx-transit-"); ok {
+			if vpc, err := c.vpcsLister.Get(after); err == nil && vpc.Spec.ExternalVXLAN != nil {
+				continue
+			}
+		}
 		if ls == util.InterconnectionSwitch ||
 			ls == util.ExternalGatewaySwitch ||
 			ls == c.config.ExternalGatewaySwitch {

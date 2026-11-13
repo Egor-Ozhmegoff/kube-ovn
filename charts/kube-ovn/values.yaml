@@ -51,6 +51,11 @@ externalOvnCentral:
   sbPort: 6642
 
 networking:
+  # Optional direct Kubernetes API endpoint; empty host keeps in-cluster discovery.
+  # Set a bare IP or DNS name (no scheme/port) reachable by all API clients.
+  # The endpoint must be covered by the API server certificate SANs.
+  API_SERVER_HOST: ""
+  API_SERVER_PORT: "6443"
   # NET_STACK could be dual_stack, ipv4, ipv6
   NET_STACK: ipv4
   ENABLE_SSL: false

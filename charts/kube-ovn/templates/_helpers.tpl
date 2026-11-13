@@ -348,3 +348,16 @@ Otherwise, auto-detect based on the currently deployed DaemonSet.
 {{- define "kubeovn.runAsUser" -}}
   65534
 {{- end -}}
+
+{{/*
+Override in-cluster API discovery while retaining ServiceAccount credentials.
+Do not emit either variable unless an explicit host is configured.
+*/}}
+{{- define "kubeovn.kubernetesAPIEnv" -}}
+{{- with .Values.networking.API_SERVER_HOST }}
+- name: KUBERNETES_SERVICE_HOST
+  value: {{ . | quote }}
+- name: KUBERNETES_SERVICE_PORT
+  value: {{ $.Values.networking.API_SERVER_PORT | default "6443" | quote }}
+{{- end }}
+{{- end -}}

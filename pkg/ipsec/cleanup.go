@@ -105,7 +105,10 @@ func (a *Agent) restoreCleanupProtection(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
-	row, err := a.ovs.IPsecDatapathConfiguration()
+	// A never-enabled node has no encryption to drain. Read ownership evidence
+	// before applying IPsec-only datapath restrictions such as the EVPN ban.
+	// Every path that restores or releases protection still validates below.
+	row, err := a.ovs.IPsecConfiguration()
 	if err != nil {
 		return false, err
 	}
@@ -145,7 +148,13 @@ func (a *Agent) restoreCleanupProtection(ctx context.Context) (bool, error) {
 		if state.Phase != DisablingPhase && state.Phase != CleanupPhase && state.Phase != ReleasePhase {
 			return false, errors.New("IPsec cleanup is waiting for disable authorization")
 		}
+		if _, err := a.ovs.IPsecDatapathConfiguration(); err != nil {
+			return true, err
+		}
 		return true, a.ensureProtection(string(node.UID), row.ExternalIDs["system-id"])
+	}
+	if _, err := a.ovs.IPsecDatapathConfiguration(); err != nil {
+		return true, err
 	}
 	if !reservation.Required && reservation.Released {
 		// A crash after the guarded release but before the API receipt patch

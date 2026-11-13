@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"reflect"
@@ -59,6 +60,7 @@ func (c *Controller) enqueueUpdateVpc(oldObj, newObj any) {
 		!reflect.DeepEqual(oldVpc.Spec.StaticRoutes, newVpc.Spec.StaticRoutes) ||
 		!reflect.DeepEqual(oldVpc.Spec.PolicyRoutes, newVpc.Spec.PolicyRoutes) ||
 		!reflect.DeepEqual(oldVpc.Spec.VpcPeerings, newVpc.Spec.VpcPeerings) ||
+		!reflect.DeepEqual(oldVpc.Spec.ExternalVXLAN, newVpc.Spec.ExternalVXLAN) ||
 		kubeOvnAnnotationsChanged(oldVpc.Annotations, newVpc.Annotations) ||
 		!slices.Equal(oldVpc.Spec.ExtraExternalSubnets, newVpc.Spec.ExtraExternalSubnets) ||
 		oldVpc.Spec.EnableExternal != newVpc.Spec.EnableExternal ||
@@ -157,6 +159,11 @@ func (c *Controller) handleDelVpc(vpc *kubeovnv1.Vpc) (retErr error) {
 		}
 	}
 
+	if vpc.Spec.ExternalVXLAN != nil || vpc.Status.ExternalVXLAN {
+		if err := c.OVNNbClient.ReconcileExternalVXLANRouter(vpc.Name, "", "", nil); err != nil {
+			return err
+		}
+	}
 	if err := c.deleteVpcRouter(vpc.Status.Router); err != nil {
 		klog.Error(err)
 		return err
@@ -308,9 +315,16 @@ func (c *Controller) handleAddOrUpdateVpc(key string) (retErr error) {
 		}
 	}
 
-	if err = c.createVpcRouter(key, learnFromARPRequest); err != nil {
+	originalStatus := vpc.Status.DeepCopy()
+	if err := c.ensureExternalVXLANHostContracts(vpc); err != nil {
+		return c.recordResourceError(vpc, "ExternalVXLANHostNotValidated", err)
+	}
+	if err = c.createVpcRouter(key, learnFromARPRequest, vpc.Spec.ExternalVXLAN); err != nil {
 		klog.Errorf("failed to create vpc router for vpc %s: %v", key, err)
 		return err
+	}
+	if err := c.reconcileExternalVXLANVpc(vpc); err != nil {
+		return c.recordResourceError(vpc, "ReconcileExternalVXLANFailed", err)
 	}
 
 	var newPeers []string
@@ -580,12 +594,12 @@ func (c *Controller) handleAddOrUpdateVpc(key string) (retErr error) {
 		return err
 	}
 
-	originalStatus := vpc.Status.DeepCopy()
 	vpc.Status.Subnets = vpcSubnets
 	vpc.Status.DefaultLogicalSwitch = defaultSubnet
 	vpc.Status.Router = key
 	vpc.Status.Standby = true
 	vpc.Status.VpcPeerings = newPeers
+	vpc.Status.ExternalVXLAN = vpc.Spec.ExternalVXLAN != nil
 	vpc, err = c.patchVpcStatus(vpc, originalStatus)
 	if err != nil {
 		klog.Error(err)
@@ -1299,7 +1313,7 @@ func (c *Controller) getVpcSubnets(vpc *kubeovnv1.Vpc) (subnets []string, defaul
 }
 
 // createVpcRouter create router to connect logical switches in vpc
-func (c *Controller) createVpcRouter(lr string, learnFromARPRequest bool) error {
+func (c *Controller) createVpcRouter(lr string, learnFromARPRequest bool, externalVXLAN *kubeovnv1.ExternalVXLANGateway) error {
 	lrOptions := map[string]string{
 		"mac_binding_age_threshold": "300",
 		"dynamic_neigh_routers":     "true",
@@ -1307,6 +1321,7 @@ func (c *Controller) createVpcRouter(lr string, learnFromARPRequest bool) error 
 	if !learnFromARPRequest {
 		lrOptions["always_learn_from_arp_request"] = "false"
 	}
+	maps.Copy(lrOptions, util.ExternalVXLANRouterOptions(externalVXLAN))
 	if err := c.OVNNbClient.CreateLogicalRouterWithOptions(lr, lrOptions); err != nil {
 		klog.Errorf("create or update logical router %s failed: %v", lr, err)
 		return err

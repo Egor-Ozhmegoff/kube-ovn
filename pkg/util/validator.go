@@ -15,6 +15,9 @@ import (
 )
 
 func ValidateSubnet(subnet kubeovnv1.Subnet) error {
+	if err := ValidateExternalVXLANSubnet(subnet); err != nil {
+		return err
+	}
 	// Allow underlay subnets (with vlan) to be created without a CIDRBlock.
 	// Such subnets only allocate a MAC address and rely on an external DHCP
 	// server (BYO-DHCP) for IP assignment.
@@ -608,6 +611,12 @@ func ValidateCidrConflict(subnet kubeovnv1.Subnet, subnetList []kubeovnv1.Subnet
 }
 
 func ValidateVpc(vpc *kubeovnv1.Vpc) error {
+	if err := ValidateExternalVXLANGateway(vpc.Spec.ExternalVXLAN); err != nil {
+		return err
+	}
+	if vpc.Spec.ExternalVXLAN != nil && (vpc.Name == DefaultVpc || vpc.Spec.EnableExternal || len(vpc.Spec.VpcPeerings) != 0) {
+		return errors.New("external VXLAN requires a custom VPC without external gateway or VPC peering")
+	}
 	for _, item := range vpc.Spec.StaticRoutes {
 		if item.Policy != "" && item.Policy != kubeovnv1.PolicyDst && item.Policy != kubeovnv1.PolicySrc {
 			return fmt.Errorf("unknown policy type: %s", item.Policy)

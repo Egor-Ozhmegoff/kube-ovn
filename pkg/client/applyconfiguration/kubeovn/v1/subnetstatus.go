@@ -25,6 +25,8 @@ import (
 // SubnetStatusApplyConfiguration represents a declarative configuration of the SubnetStatus type for use
 // with apply.
 type SubnetStatusApplyConfiguration struct {
+	// ExternalVXLAN records managed NB configuration, not dataplane readiness.
+	ExternalVXLAN *bool `json:"externalVXLAN,omitempty"`
 	// Conditions represents the latest state of the object
 	Conditions         []ConditionApplyConfiguration `json:"conditions,omitempty"`
 	V4AvailableIPs     *internal.BigInt              `json:"v4availableIPs,omitempty"`
@@ -52,6 +54,14 @@ type SubnetStatusApplyConfiguration struct {
 // apply.
 func SubnetStatus() *SubnetStatusApplyConfiguration {
 	return &SubnetStatusApplyConfiguration{}
+}
+
+// WithExternalVXLAN sets the ExternalVXLAN field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExternalVXLAN field is set to the value of the last call.
+func (b *SubnetStatusApplyConfiguration) WithExternalVXLAN(value bool) *SubnetStatusApplyConfiguration {
+	b.ExternalVXLAN = &value
+	return b
 }
 
 // WithConditions adds the given value to the Conditions field in the declarative configuration

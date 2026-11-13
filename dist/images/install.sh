@@ -3130,6 +3130,66 @@ spec:
               externalEgressGateway:
                 description: External egress gateway IPs.
                 type: string
+              externalVXLAN:
+                description: |-
+                  ExternalVXLAN extends this routed logical switch through host FRR or static VTEPs.
+                  The distributed OVN gateway remains the subnet's gateway on every chassis.
+                properties:
+                  frr:
+                    description: |-
+                      FRR attaches to explicitly named, host-owned control-plane interfaces.
+                      Remote VTEPs, MACs and routes are learned exclusively from FRR.
+                    properties:
+                      advertise:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      bridge:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      controlPort:
+                        description: Shadow control-plane socket, distinct from OVS
+                          workload UDP 4789.
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      tableID:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 1
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: VRF table IDs 252 through 255 are reserved in OVN
+                            26.03
+                          rule: self < 252 || self > 255
+                      vrf:
+                        description: Host-owned VRF shared by the L2 and L3 control-plane
+                          bridges of a tenant.
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      vxlan:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                    type: object
+                  gatewayMAC:
+                    description: |-
+                      GatewayMAC is the VM-facing distributed anycast gateway MAC for a Subnet.
+                      It must be unset for a Vpc attachment, which uses the gateway Node's Router MAC.
+                    type: string
+                  vni:
+                    description: External VXLAN network identifier, independent of
+                      OVN's cluster tunnel keys.
+                    format: int32
+                    maximum: 16777215
+                    minimum: 1
+                    type: integer
+                required:
+                - frr
+                - vni
+                type: object
               gateway:
                 description: Gateway IP address for the subnet.
                 type: string
@@ -3379,6 +3439,10 @@ spec:
                 type: string
               dhcpV6OptionsUUID:
                 type: string
+              externalVXLAN:
+                description: ExternalVXLAN records managed NB configuration, not dataplane
+                  readiness.
+                type: boolean
               gatewayMAC:
                 description: |-
                   GatewayMAC is the mac address of the subnet's logical router port, recorded so
@@ -7473,6 +7537,116 @@ spec:
               enableExternal:
                 description: Enable external network access for the VPC
                 type: boolean
+              externalVXLAN:
+                description: ExternalVXLAN connects this router to a native external
+                  L3 VXLAN domain.
+                properties:
+                  frr:
+                    description: |-
+                      FRR attaches to explicitly named, host-owned control-plane interfaces.
+                      Remote VTEPs, MACs and routes are learned exclusively from FRR.
+                    properties:
+                      advertise:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      bridge:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      controlPort:
+                        description: Shadow control-plane socket, distinct from OVS
+                          workload UDP 4789.
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      tableID:
+                        format: int64
+                        maximum: 4294967294
+                        minimum: 1
+                        type: integer
+                        x-kubernetes-validations:
+                        - message: VRF table IDs 252 through 255 are reserved in OVN
+                            26.03
+                          rule: self < 252 || self > 255
+                      vrf:
+                        description: Host-owned VRF shared by the L2 and L3 control-plane
+                          bridges of a tenant.
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      vxlan:
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                    type: object
+                  gatewayMAC:
+                    description: |-
+                      GatewayMAC is the VM-facing distributed anycast gateway MAC for a Subnet.
+                      It must be unset for a Vpc attachment, which uses the gateway Node's Router MAC.
+                    type: string
+                  gatewayNode:
+                    description: GatewayNode is the legacy single-node attachment.
+                      Do not combine with gatewayNodes.
+                    type: string
+                  gatewayNodes:
+                    description: |-
+                      GatewayNodes configures active-active DGPs with per-node transit IP and Router MAC.
+                      Inactive nodes retain ingress identity; in FRR mode the controller clears their DGP chassis binding.
+                    items:
+                      properties:
+                        egress:
+                          description: Egress defaults to true. False retains an ingress
+                            identity without egress routes.
+                          type: boolean
+                        node:
+                          minLength: 1
+                          type: string
+                        routingPort:
+                          description: Existing OVN dynamic-routing-port-mapping key
+                            resolving to the FRR bridge.
+                          type: string
+                        transitCIDR:
+                          description: Unique IPv4 address/prefix for this node's
+                            logical router port.
+                          minLength: 1
+                          type: string
+                      required:
+                      - node
+                      - transitCIDR
+                      type: object
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - node
+                    x-kubernetes-list-type: map
+                  routingPort:
+                    description: Host's existing dynamic-routing-port-mapping key
+                      for legacy gatewayNode.
+                    type: string
+                  transitCIDR:
+                    description: TransitCIDR is an IPv4 address/prefix for the fabric-facing
+                      logical router port.
+                    type: string
+                  vni:
+                    description: External VXLAN network identifier, independent of
+                      OVN's cluster tunnel keys.
+                    format: int32
+                    maximum: 16777215
+                    minimum: 1
+                    type: integer
+                required:
+                - frr
+                - vni
+                type: object
+                x-kubernetes-validations:
+                - message: specify gatewayNodes or legacy gatewayNode, exclusively
+                  rule: (has(self.gatewayNodes) && size(self.gatewayNodes) > 0) !=
+                    (has(self.gatewayNode) && size(self.gatewayNode) > 0)
+                - message: transitCIDR belongs in each gatewayNodes entry
+                  rule: '!has(self.gatewayNodes) || !has(self.transitCIDR)'
+                - message: legacy gatewayNode requires transitCIDR
+                  rule: '!has(self.gatewayNode) || has(self.transitCIDR)'
               extraExternalSubnets:
                 description: Extra external subnets for provider-network VLAN. Immutable
                   after creation.
@@ -7594,6 +7768,17 @@ spec:
                 type: boolean
               enableExternal:
                 type: boolean
+              externalVXLAN:
+                description: ExternalVXLAN records managed NB configuration, not dataplane
+                  readiness.
+                type: boolean
+              externalVXLANReadyNodes:
+                description: ExternalVXLANReadyNodes records Kubernetes-ready ECMP
+                  members, not dataplane health.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               extraExternalSubnets:
                 description: Extra external subnets for provider-network VLAN. Immutable
                   after creation.
@@ -8086,6 +8271,7 @@ rules:
       - subnets
       - vlans
       - provider-networks
+      - vpcs
     verbs:
       - get
       - list

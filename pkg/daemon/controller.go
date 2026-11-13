@@ -1079,6 +1079,7 @@ func (c *Controller) Run(stopCh <-chan struct{}) {
 
 	go wait.Until(c.gcInterfaces, time.Minute, stopCh)
 	go wait.Until(c.reconcileACLSamplingCollectorSet, time.Minute, stopCh)
+	go wait.Until(c.syncExternalVXLAN, 10*time.Second, stopCh)
 	if c.config.EnableRecompute {
 		go wait.Until(recompute, 10*time.Minute, stopCh)
 	}

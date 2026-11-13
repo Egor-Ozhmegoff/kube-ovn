@@ -146,6 +146,7 @@ spec:
         - name: ovs-ovn-upgrade
           image: "{{ .Values.global.registry.address}}/{{ .Values.global.images.kubeovn.repository }}:{{ .Values.global.images.kubeovn.tag }}"
           env:
+            {{- include "kubeovn.kubernetesAPIEnv" . | nindent 12 }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

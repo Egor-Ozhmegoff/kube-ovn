@@ -59,3 +59,27 @@ and use the following options to install this Helm-chart:
 
 `OVN_IPSEC_KEY_DIR` only becomes a host mount when `func.ENABLE_OVN_IPSEC` is enabled, but setting it up
 front keeps IPSEC from failing later with `mkdir /etc/origin: read-only file system`.
+
+## Direct Kubernetes API endpoint
+
+By default, Kubernetes supplies the API Service ClusterIP through the in-cluster
+configuration. To reach the API directly (for example, while bootstrapping the
+CNI), configure a stable control-plane load balancer or VIP:
+
+```yaml
+networking:
+  API_SERVER_HOST: "api.example.com"
+  API_SERVER_PORT: "6443"
+```
+
+Use a bare IP/DNS name without a scheme or port. The endpoint must be reachable
+from the nodes and Pods running API clients, and present in the API server
+certificate SANs. ServiceAccount token and CA authentication remain unchanged.
+With an empty host the chart emits neither override variable; with a host and
+an empty port it uses 6443.
+
+The override applies to controller, CNI, IPsec agent/cleanup, OVS startup,
+OVN Central leader checker, IC controller, pinger and upgrade/delete hooks.
+It changes neither Service CIDRs nor OVN database addresses (`MASTER_NODES`).
+Explicit kubeconfigs, when used by a client, retain their own server endpoint.
+This setting belongs to `charts/kube-ovn`; it does not configure chart v2.

@@ -748,6 +748,25 @@ func (c *Controller) prepareOvnSubnet(subnet *kubeovnv1.Subnet) (*kubeovnv1.Vpc,
 
 	gateway := subnet.Spec.Gateway
 	var gatewayMAC string
+	if subnet.Spec.ExternalVXLAN != nil {
+		if err := util.ValidateExternalVXLANSubnet(*subnet); err != nil {
+			return nil, c.recordResourceError(subnet, "InvalidExternalVXLAN", err)
+		}
+		if config := subnet.Spec.ExternalVXLAN.FRR; config != nil {
+			if vpc.Spec.ExternalVXLAN == nil || vpc.Spec.ExternalVXLAN.FRR == nil ||
+				vpc.Spec.ExternalVXLAN.FRR.VRF != config.VRF || vpc.Spec.ExternalVXLAN.FRR.TableID != config.TableID {
+				return nil, c.recordResourceError(subnet, "InvalidExternalVXLAN", errors.New("FRR subnet and VPC must share the same host VRF and table"))
+			}
+			if err := c.validateExternalVXLANHostContracts(vpc); err != nil {
+				c.addOrUpdateVpcQueue.Add(vpc.Name)
+				return nil, c.recordResourceError(subnet, "ExternalVXLANHostNotValidated", err)
+			}
+		}
+		if err := c.validateExternalVXLANVNI(subnet.Spec.ExternalVXLAN.VNI, subnet.Name, ""); err != nil {
+			return nil, c.recordResourceError(subnet, "ExternalVXLANConflict", err)
+		}
+		gatewayMAC = subnet.Spec.ExternalVXLAN.GatewayMAC
+	}
 	if subnet.Status.U2OInterconnectionIP != "" && subnet.Spec.U2OInterconnection {
 		gateway = subnet.Status.U2OInterconnectionIP
 		gatewayMAC = subnet.Status.U2OInterconnectionMAC
@@ -778,6 +797,12 @@ func (c *Controller) prepareOvnSubnet(subnet *kubeovnv1.Subnet) (*kubeovnv1.Vpc,
 	}
 
 	if needRouter {
+		if subnet.Spec.ExternalVXLAN != nil || subnet.Status.ExternalVXLAN {
+			if err := c.OVNNbClient.ReconcileExternalVXLANSwitch(subnet.Name, subnet.Spec.ExternalVXLAN); err != nil {
+				return nil, c.recordResourceError(subnet, "ReconcileExternalVXLANFailed", err)
+			}
+			subnet.Status.ExternalVXLAN = subnet.Spec.ExternalVXLAN != nil
+		}
 		routerPortName := ovs.LogicalRouterPortName(vpc.Status.Router, subnet.Name)
 		if err := c.recordSubnetGatewayMAC(subnet, routerPortName); err != nil {
 			return nil, c.recordResourceError(subnet, "UpdateGatewayMACStatusFailed", err)

@@ -40,6 +40,10 @@ type NBGlobal interface {
 }
 
 type LogicalRouter interface {
+	ReconcileExternalVXLANRouter(lrName, routerMAC, chassis string, config *kubeovnv1.ExternalVXLANGateway) error
+	ReconcileExternalVXLANRouterGateways(lrName string, gateways []ExternalVXLANRouterGateway, config *kubeovnv1.ExternalVXLANGateway) error
+	ReconcileExternalVXLANSwitch(lsName string, config *kubeovnv1.ExternalVXLAN) error
+	DeactivateExternalVXLANRouter(router string) error
 	CreateLogicalRouter(lrName string) error
 	CreateLogicalRouterWithOptions(lrName string, options map[string]string) error
 	UpdateLogicalRouter(lr *ovnnb.LogicalRouter, fields ...any) error

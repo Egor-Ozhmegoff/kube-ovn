@@ -188,6 +188,7 @@ spec:
                 - NET_BIND_SERVICE
                 - NET_RAW
           env:
+            {{- include "kubeovn.kubernetesAPIEnv" . | nindent 12 }}
             - name: ENABLE_SSL
               value: "{{ .Values.networking.ENABLE_SSL }}"
             - name: KUBE_OVN_TLS_ROTATION_INTERVAL

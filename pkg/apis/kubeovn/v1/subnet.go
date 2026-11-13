@@ -163,6 +163,10 @@ type SubnetSpec struct {
 	NamespaceSelectors []metav1.LabelSelector `json:"namespaceSelectors,omitempty"`
 	// Node network name for underlay.
 	NodeNetwork string `json:"nodeNetwork,omitempty"`
+	// ExternalVXLAN extends this routed logical switch through host FRR or static VTEPs.
+	// The distributed OVN gateway remains the subnet's gateway on every chassis.
+	// +optional
+	ExternalVXLAN *ExternalVXLAN `json:"externalVXLAN,omitempty"`
 }
 
 type U2OFeatures struct {
@@ -192,6 +196,8 @@ type NatOutgoingPolicyRuleStatus struct {
 	NatOutgoingPolicyRule `json:",inline"`
 }
 type SubnetStatus struct {
+	// ExternalVXLAN records managed NB configuration, not dataplane readiness.
+	ExternalVXLAN bool `json:"externalVXLAN,omitempty"`
 	// Conditions represents the latest state of the object
 	// +optional
 	// +patchMergeKey=type

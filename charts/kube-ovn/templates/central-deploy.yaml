@@ -138,6 +138,7 @@ spec:
                 - NET_BIND_SERVICE
                 - SYS_NICE
           env:
+            {{- include "kubeovn.kubernetesAPIEnv" . | nindent 12 }}
 {{- include "kubeovn.ovnCentralTLSEnv" . | nindent 12 }}
             {{- if index .Values "ovn-central" "hcp" "enabled" }}
             - name: POD_NAME
