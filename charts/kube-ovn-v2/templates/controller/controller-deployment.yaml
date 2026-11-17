@@ -177,6 +177,12 @@ spec:
           - --enable-gw-nftable-svc-cluster-ip={{- .Values.features.enableGwNftableServiceClusterIp }}
           {{- end }}
           - --keep-vm-ip={{- .Values.features.enableKeepVmIps }}
+          {{- if .Values.openperouter.enabled }}
+          {{- if or (eq .Values.networking.networkType "vlan") (ne .Values.networking.tunnelType "vxlan") }}
+          {{- fail "OpenPERouter integration requires overlay networking and networking.tunnelType=vxlan" }}
+          {{- end }}
+          - --enable-openperouter=true
+          {{- end }}
           - --enable-metrics={{- .Values.networking.enableMetrics }}
           - --node-local-dns-ip={{- .Values.networking.nodeLocalDnsIp }}
           - --skip-conntrack-dst-cidrs={{- .Values.networking.skipConntrackDstCidrs }}

@@ -55,9 +55,11 @@ type Controller struct {
 	vlansLister kubeovnlister.VlanLister
 	vlansSynced cache.InformerSynced
 
-	subnetsLister kubeovnlister.SubnetLister
-	subnetsSynced cache.InformerSynced
-	subnetQueue   workqueue.TypedRateLimitingInterface[*subnetEvent]
+	subnetsLister          kubeovnlister.SubnetLister
+	subnetsSynced          cache.InformerSynced
+	subnetQueue            workqueue.TypedRateLimitingInterface[*subnetEvent]
+	openPERouterVpcs       kubeovnlister.VpcLister
+	openPERouterVpcsSynced cache.InformerSynced
 
 	ovnEipsLister kubeovnlister.OvnEipLister
 	ovnEipsSynced cache.InformerSynced
@@ -213,6 +215,11 @@ func NewController(config *Configuration,
 		}
 	}
 
+	if config.EnableOpenPERouter {
+		vpcInformer := kubeovnInformerFactory.Kubeovn().V1().Vpcs()
+		controller.openPERouterVpcs = vpcInformer.Lister()
+		controller.openPERouterVpcsSynced = vpcInformer.Informer().HasSynced
+	}
 	podInformerFactory.Start(stopCh)
 	nodeInformerFactory.Start(stopCh)
 	kubeovnInformerFactory.Start(stopCh)
@@ -1076,6 +1083,9 @@ func (c *Controller) Run(stopCh <-chan struct{}) {
 	defer c.updatePodQueue.ShutDown()
 	defer c.updateNodeQueue.ShutDown()
 	defer c.closeVswitch()
+	if c.config.EnableOpenPERouter {
+		go c.runOpenPERouter(stopCh)
+	}
 
 	go wait.Until(c.gcInterfaces, time.Minute, stopCh)
 	go wait.Until(c.reconcileACLSamplingCollectorSet, time.Minute, stopCh)

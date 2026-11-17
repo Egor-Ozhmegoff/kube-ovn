@@ -56,6 +56,10 @@ type Vpc struct {
 }
 
 type VpcSpec struct {
+	// Optional integration with a locally bootstrapped OpenPERouter on each node.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="OpenPERouter routing-domain settings are immutable"
+	OpenPERouter *OpenPERouterIntegration `json:"openPERouter,omitempty"`
 	// The default subnet name for the VPC
 	DefaultSubnet string `json:"defaultSubnet,omitempty"`
 	// List of namespaces that can use this VPC

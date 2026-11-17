@@ -134,7 +134,13 @@ type MonitorCookie struct {
 }
 
 type monitorConfig struct {
-	tables []model.Model
+	tables      []model.Model
+	conditional []conditionalTable
+}
+
+type conditionalTable struct {
+	row        model.Model
+	conditions []model.Condition
 }
 
 // MonitorOption configures a compatibility monitor.
@@ -144,6 +150,18 @@ type MonitorOption func(*monitorConfig) error
 func WithTable(m model.Model) MonitorOption {
 	return func(config *monitorConfig) error {
 		config.tables = append(config.tables, m)
+		return nil
+	}
+}
+
+// WithConditionalTable restricts the server-side monitor, rather than fetching
+// a complete table and filtering its cached copy on every node.
+func WithConditionalTable(m model.Model, conditions ...model.Condition) MonitorOption {
+	return func(config *monitorConfig) error {
+		if m == nil || len(conditions) == 0 {
+			return errors.New("conditional monitor requires a model and a condition")
+		}
+		config.conditional = append(config.conditional, conditionalTable{row: m, conditions: append([]model.Condition(nil), conditions...)})
 		return nil
 	}
 }
@@ -230,6 +248,9 @@ func (b *rawBackend) NewMonitor(options ...MonitorOption) *Monitor {
 	rawOptions := make([]client.MonitorOption, 0, len(config.tables))
 	for _, table := range config.tables {
 		rawOptions = append(rawOptions, client.WithTable(table))
+	}
+	for _, conditional := range config.conditional {
+		rawOptions = append(rawOptions, client.WithConditionalTable(conditional.row, conditional.conditions))
 	}
 	monitor.raw = b.client.NewMonitor(rawOptions...)
 	monitor.Method = monitor.raw.Method

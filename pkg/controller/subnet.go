@@ -956,6 +956,16 @@ func (c *Controller) prepareOvnSubnet(ctx context.Context, subnet *kubeovnv1.Sub
 
 	gateway := subnet.Spec.Gateway
 	var gatewayMAC string
+	if subnet.Spec.OpenPERouterL2 != nil {
+		if vpc.Spec.OpenPERouter == nil || !c.config.EnableOpenPERouter {
+			return nil, fmt.Errorf("subnet %s requires an enabled OpenPERouter VPC", subnet.Name)
+		}
+		gatewayMAC = subnet.Spec.OpenPERouterL2.GatewayMAC
+	}
+	if vpc.Spec.OpenPERouter != nil && (subnet.Spec.NatOutgoing || subnet.Spec.Vlan != "" || subnet.Spec.U2OInterconnection ||
+		subnet.Spec.ExternalEgressGateway != "" || subnet.Spec.GatewayType == kubeovnv1.GWCentralizedType || subnet.Spec.RouteTable != "") {
+		return nil, fmt.Errorf("subnet %s conflicts with isolated local OpenPERouter egress", subnet.Name)
+	}
 	if subnet.Status.U2OInterconnectionIP != "" && subnet.Spec.U2OInterconnection {
 		gateway = subnet.Status.U2OInterconnectionIP
 		gatewayMAC = subnet.Status.U2OInterconnectionMAC
@@ -983,6 +993,9 @@ func (c *Controller) prepareOvnSubnet(ctx context.Context, subnet *kubeovnv1.Sub
 		return nil
 	}(); err != nil {
 		return nil, c.recordResourceError(subnet, "CreateLogicalSwitchFailed", err)
+	}
+	if err := c.prepareOpenPERouterL2(subnet); err != nil {
+		return nil, c.recordResourceError(subnet, "OpenPERouterL2Failed", err)
 	}
 
 	if needRouter {

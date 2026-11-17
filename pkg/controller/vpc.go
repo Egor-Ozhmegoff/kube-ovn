@@ -59,6 +59,7 @@ func (c *Controller) enqueueUpdateVpc(oldObj, newObj any) {
 		!reflect.DeepEqual(oldVpc.Spec.StaticRoutes, newVpc.Spec.StaticRoutes) ||
 		!reflect.DeepEqual(oldVpc.Spec.PolicyRoutes, newVpc.Spec.PolicyRoutes) ||
 		!reflect.DeepEqual(oldVpc.Spec.VpcPeerings, newVpc.Spec.VpcPeerings) ||
+		!reflect.DeepEqual(oldVpc.Spec.OpenPERouter, newVpc.Spec.OpenPERouter) ||
 		kubeOvnAnnotationsChanged(oldVpc.Annotations, newVpc.Annotations) ||
 		!slices.Equal(oldVpc.Spec.ExtraExternalSubnets, newVpc.Spec.ExtraExternalSubnets) ||
 		oldVpc.Spec.EnableExternal != newVpc.Spec.EnableExternal ||
@@ -312,6 +313,10 @@ func (c *Controller) handleAddOrUpdateVpc(key string) (retErr error) {
 		klog.Errorf("failed to create vpc router for vpc %s: %v", key, err)
 		return err
 	}
+	openPERouterRoutes, err := c.reconcileOpenPERouterVpc(vpc)
+	if err != nil {
+		return err
+	}
 
 	var newPeers []string
 	for _, peering := range vpc.Spec.VpcPeerings {
@@ -374,7 +379,7 @@ func (c *Controller) handleAddOrUpdateVpc(key string) (retErr error) {
 	}
 
 	staticRouteMapping = c.getRouteTablesByVpc(vpc)
-	staticTargetRoutes = vpc.Spec.StaticRoutes
+	staticTargetRoutes = append(slices.Clone(vpc.Spec.StaticRoutes), openPERouterRoutes...)
 	if vpc.Name == c.config.ClusterRouter {
 		if _, ok := staticRouteMapping[util.MainRouteTable]; !ok {
 			staticRouteMapping[util.MainRouteTable] = nil

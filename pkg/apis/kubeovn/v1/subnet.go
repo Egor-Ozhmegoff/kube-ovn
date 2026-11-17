@@ -64,6 +64,10 @@ type Subnet struct {
 }
 
 type SubnetSpec struct {
+	// Optional external L2 attachment; omitted for routed-only Pod networks.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="OpenPERouter L2 attachment settings are immutable"
+	OpenPERouterL2 *OpenPERouterL2Attachment `json:"openPERouterL2,omitempty"`
 	// Whether this is the default subnet.
 	Default bool `json:"default"`
 	// VPC name for the subnet. Immutable after creation.

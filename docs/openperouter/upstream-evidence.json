@@ -1,0 +1,40 @@
+{
+  "repository": "https://github.com/openperouter/openperouter",
+  "commit": "bb9cdb92dce61e28178817e2c15c912906d1dcd8",
+  "reviewDate": "2026-11-16",
+  "sha256": {
+    "api/v1alpha1/l2vni_types.go": "7d9736dd556285b0add3068e84f642d9b587dd4d606dcd3f0d3e20c866a05093",
+    "api/v1alpha1/l3vni_types.go": "53f147a35867026f77822eb7aafe2a8ca6c1b8ca98cebd2a261a98405f38d056",
+    "api/v1alpha1/hostsession.go": "452c218833a495e49cec3c1d17f9aef9822a7d388b92691976ecdb084ca860b8",
+    "api/v1alpha1/neighbor.go": "d0c6188dbf0dfb00ddf4a30bb3e617ca68dd0705895439d348fc9c00286e02b1",
+    "api/v1alpha1/underlay_types.go": "4901ede4dc6432c3771cccccf5ecbe02ce327603ac171d13582fd3cfaf3ce6e5",
+    "internal/hostnetwork/bridge.go": "5d7dd7857c3b79a4519433ff2f20ec0cf21bcbf091fa215e68e1f865e44dd422",
+    "internal/hostnetwork/vni.go": "1cec8a6b708aa0c9b321756fe39ef7b7f9cae7a1ebe4a05ec6aaadafd107d0d3",
+    "internal/hostnetwork/veth.go": "b1cd258ed28eff3d08d6e73f493914bc3f97fd164f85773a2176a6a7a8bb7075",
+    "internal/hostnetwork/vrf.go": "ead500a860e4d6c9843f999ad97838314655ba4da7ba3700138cdb69016d89f5",
+    "internal/frr/templates/frr.tmpl": "eb4b9ff321afa6dbe404518c8d69c64c9b1ca97125f8052b87e1895b8915cf1e",
+    "internal/frr/templates/localneighbor.tmpl": "b23cabcb99ff525d5455dd17ceb232c6c0abcd4e59035a2ae4217c3381e89201",
+    "internal/frr/templates/vni.tmpl": "d22540e4ca16f1870ef390054163b6772cd6e628c6e8e6e1f0e07158a4bed49f",
+    "Dockerfile": "406e1cd62ed507d711afd336865c9970c1bdbdd146e6043ad80514ec2dc0fa3a",
+    "systemdmode/quadlets/routerpod.pod": "56bc227b52f4370f03afe16c60e34a4eb575b272273ad8f5a288aa33edc7bef5",
+    "systemdmode/quadlets/controller.container": "f72d471600205e4709a4ed161b65dc6c2a03ba30704aacae1a9a5610061b4bf0",
+    "internal/staticconfiguration/reader.go": "d7cc12ffd70a2703e3ca3289592e5ebdeb9f8231d6e20ebce7e92020d6f58fca"
+  },
+  "blockers": [
+    {
+      "requirement": 13,
+      "api": "network.openperouter.io/v1alpha1 L3VNISpec",
+      "code": "internal/hostnetwork/vni.go:SetupL3VNI; internal/hostnetwork/bridge.go:createBridge",
+      "reason": "No node-wide L3 RMAC setting. L3 bridge creation does not set a common per-node hardware address."
+    }
+  ],
+  "limitations": [
+    {
+      "requirement": 12,
+      "api": "network.openperouter.io/v1alpha1 L2VNISpec",
+      "code": "internal/hostnetwork/bridge.go:BridgeFixedMAC; internal/hostnetwork/vni.go:setupL2VNIRouterSide",
+      "reason": "No configurable gateway MAC. Reconciler enforces 00:f3 followed by big-endian uint32(VNI+1), not 02:00:05:00:03:00.",
+      "scope": "OpenPERouter-owned IRB gateway; OVN-owned gateway alternative is unproven, not ruled out"
+    }
+  ]
+}

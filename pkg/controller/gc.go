@@ -173,6 +173,9 @@ func (c *Controller) gcLogicalSwitch() error {
 	klog.Infof("logical switch in ovn: %v", lss)
 	klog.Infof("subnet in kubernetes: %v", subnetNames)
 	for _, ls := range lss {
+		if c.keepOpenPERouterSwitch(ls) {
+			continue
+		}
 		if ls == util.InterconnectionSwitch ||
 			ls == util.ExternalGatewaySwitch ||
 			ls == c.config.ExternalGatewaySwitch {
@@ -554,6 +557,9 @@ func (c *Controller) markAndCleanLSP() error {
 	lspMap := strset.NewWithSize(len(lsps))
 	for _, lsp := range lsps {
 		lspMap.Add(lsp.Name)
+		if c.keepOpenPERouterReturnPort(lsp.Name, lsp.ExternalIDs["openperouter.kubeovn.io/vpc"], lsp.ExternalIDs["openperouter.kubeovn.io/vpc-uid"]) {
+			continue
+		}
 		if ipMap.Has(lsp.Name) {
 			continue
 		}

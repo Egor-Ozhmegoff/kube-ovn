@@ -100,3 +100,9 @@ dist/kubectl-ko/
 kubectl-ko-recovery-*.json
 ovnnb_db.*.backup.json
 ovnsb_db.*.backup.json
+
+# Keep the declarative OpenPERouter example despite the generated-file rule.
+!docs/openperouter/examples/kube-ovn.yaml
+
+# Local OpenPERouter validation logs, packet captures and host snapshots.
+/docs/openperouter/results/

@@ -42,20 +42,22 @@ type Configuration struct {
 	CniConfName      string
 
 	// interface being used for tunnel
-	tunnelIface     string
-	Iface           string
-	HostTunnelSrc   bool
-	DPDKTunnelIface string
-	MTU             int
-	MaxMTU          int
-	MSS             int
-	EnableMirror    bool
-	MirrorNic       string
-	BindSocket      string
-	OvsSocket       string
-	KubeConfigFile  string
-	KubeClient      kubernetes.Interface
-	KubeOvnClient   clientset.Interface
+	tunnelIface           string
+	Iface                 string
+	HostTunnelSrc         bool
+	DPDKTunnelIface       string
+	MTU                   int
+	MaxMTU                int
+	EnableOpenPERouter    bool
+	OpenPERouterBootstrap string
+	MSS                   int
+	EnableMirror          bool
+	MirrorNic             string
+	BindSocket            string
+	OvsSocket             string
+	KubeConfigFile        string
+	KubeClient            kubernetes.Interface
+	KubeOvnClient         clientset.Interface
 	// VswitchTables is injected before Init so startup OVSDB writes use the
 	// same generic database handle as the daemon controller.
 	VswitchTables                 table.Provider
@@ -118,6 +120,8 @@ func ParseFlags() *Configuration {
 		argDPDKTunnelIface       = pflag.String("dpdk-tunnel-iface", "br-phy", "Specifies the DPDK tunnel interface; the node tunnel interface annotation and DPDK mode take precedence")
 		argMTU                   = pflag.Int("mtu", 0, "The MTU used by pod interfaces in overlay networks; when set to 0, it is derived from the selected interface MTU based on the network type and IP family")
 		argMaxMTU                = pflag.Int("max-mtu", 0, "Upper bound applied to the auto-computed pod MTU (0 disables the cap). Useful when the underlay uses jumbo frames but pod traffic egresses to a 1500-byte path (e.g. the internet), where the uncapped value would cause fragmentation or PMTUD-dependent blackholes. Ignored when --mtu is set explicitly.")
+		argEnableOpenPERouter    = pflag.Bool("enable-openperouter", false, "Enable experimental host-side OpenPERouter integration")
+		argOpenPERouterBootstrap = pflag.String("openperouter-bootstrap", "/var/lib/openperouter", "Read-only native OpenPERouter bootstrap directory")
 		argEnableMirror          = pflag.Bool("enable-mirror", false, "Enable traffic mirror (default false)")
 		argMirrorNic             = pflag.String("mirror-iface", "mirror0", "The mirror nic name that will be created by kube-ovn")
 		argBindSocket            = pflag.String("bind-socket", defaultBindSocket, "The socket daemon bind to.")
@@ -199,6 +203,8 @@ func ParseFlags() *Configuration {
 		DPDKTunnelIface:           *argDPDKTunnelIface,
 		MTU:                       *argMTU,
 		MaxMTU:                    *argMaxMTU,
+		EnableOpenPERouter:        *argEnableOpenPERouter,
+		OpenPERouterBootstrap:     *argOpenPERouterBootstrap,
 		EnableMirror:              *argEnableMirror,
 		MirrorNic:                 *argMirrorNic,
 		BindSocket:                *argBindSocket,

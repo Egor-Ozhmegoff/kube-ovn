@@ -25,6 +25,8 @@ import (
 // VpcSpecApplyConfiguration represents a declarative configuration of the VpcSpec type for use
 // with apply.
 type VpcSpecApplyConfiguration struct {
+	// Optional integration with a locally bootstrapped OpenPERouter on each node.
+	OpenPERouter *OpenPERouterIntegrationApplyConfiguration `json:"openPERouter,omitempty"`
 	// The default subnet name for the VPC
 	DefaultSubnet *string `json:"defaultSubnet,omitempty"`
 	// List of namespaces that can use this VPC
@@ -50,6 +52,14 @@ type VpcSpecApplyConfiguration struct {
 // apply.
 func VpcSpec() *VpcSpecApplyConfiguration {
 	return &VpcSpecApplyConfiguration{}
+}
+
+// WithOpenPERouter sets the OpenPERouter field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the OpenPERouter field is set to the value of the last call.
+func (b *VpcSpecApplyConfiguration) WithOpenPERouter(value *OpenPERouterIntegrationApplyConfiguration) *VpcSpecApplyConfiguration {
+	b.OpenPERouter = value
+	return b
 }
 
 // WithDefaultSubnet sets the DefaultSubnet field in the declarative configuration to the given value

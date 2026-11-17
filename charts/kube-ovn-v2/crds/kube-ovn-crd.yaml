@@ -2842,6 +2842,27 @@ spec:
               nodeNetwork:
                 description: Node network name for underlay.
                 type: string
+              openPERouterL2:
+                description: Optional external L2 attachment; omitted for routed-only
+                  Pod networks.
+                properties:
+                  gatewayMAC:
+                    description: Must match both the native IRB gateway and the OVN
+                      router port MAC.
+                    pattern: ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$
+                    type: string
+                  l2vniName:
+                    minLength: 1
+                    type: string
+                  vni:
+                    format: int32
+                    maximum: 16777215
+                    minimum: 1
+                    type: integer
+                type: object
+                x-kubernetes-validations:
+                - message: OpenPERouter L2 attachment settings are immutable
+                  rule: self == oldSelf
               policyRoutingPriority:
                 description: Policy routing priority.
                 format: int32
@@ -7047,6 +7068,58 @@ spec:
                 items:
                   type: string
                 type: array
+              openPERouter:
+                description: Optional integration with a locally bootstrapped OpenPERouter
+                  on each node.
+                properties:
+                  hostASN:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  hostSessionCIDRs:
+                    description: Must match hostSession.localCIDRs in the native L3VNI
+                      bootstrap.
+                    items:
+                      type: string
+                    maxItems: 2
+                    minItems: 1
+                    type: array
+                  l3vni:
+                    format: int32
+                    maximum: 16777215
+                    minimum: 1
+                    type: integer
+                  l3vniName:
+                    description: Name of the native OpenPERouter L3VNI definition,
+                      managed by bootstrap.
+                    minLength: 1
+                    type: string
+                  mode:
+                    enum:
+                    - OpenPERouter
+                    type: string
+                  routerASN:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  transitCIDRs:
+                    description: Dedicated OVN-to-host transit pools, separate from
+                      workload/hostSession pools.
+                    items:
+                      type: string
+                    maxItems: 2
+                    minItems: 1
+                    type: array
+                  vrf:
+                    description: Linux VRF in the OpenPERouter namespace and on the
+                      host.
+                    maxLength: 15
+                    pattern: ^[a-zA-Z][a-zA-Z0-9_-]*$
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: OpenPERouter routing-domain settings are immutable
+                  rule: self == oldSelf
               policyRoutes:
                 description: Policy routes for the VPC.
                 items:

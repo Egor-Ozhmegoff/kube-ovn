@@ -102,6 +102,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &kubeovnv1.NatOutgoingPolicyRuleApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NatOutgoingPolicyRuleStatus"):
 		return &kubeovnv1.NatOutgoingPolicyRuleStatusApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("OpenPERouterIntegration"):
+		return &kubeovnv1.OpenPERouterIntegrationApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("OpenPERouterL2Attachment"):
+		return &kubeovnv1.OpenPERouterL2AttachmentApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("OvnDnatRule"):
 		return &kubeovnv1.OvnDnatRuleApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("OvnDnatRuleSpec"):

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -33,11 +34,14 @@ func (v *ValidatingHook) VpcCreateHook(ctx context.Context, req admission.Reques
 	if err := util.ValidateVpc(&vpc); err != nil {
 		return ctrlwebhook.Errored(http.StatusBadRequest, err)
 	}
+	if err := v.validateOpenPERouterVpc(ctx, &vpc); err != nil {
+		return ctrlwebhook.Denied(err.Error())
+	}
 
 	return ctrlwebhook.Allowed("bypass")
 }
 
-func (v *ValidatingHook) VpcUpdateHook(_ context.Context, req admission.Request) admission.Response {
+func (v *ValidatingHook) VpcUpdateHook(ctx context.Context, req admission.Request) admission.Response {
 	vpc := ovnv1.Vpc{}
 	if err := v.decoder.DecodeRaw(req.Object, &vpc); err != nil {
 		return ctrlwebhook.Errored(http.StatusBadRequest, err)
@@ -45,6 +49,19 @@ func (v *ValidatingHook) VpcUpdateHook(_ context.Context, req admission.Request)
 
 	if err := util.ValidateVpc(&vpc); err != nil {
 		return ctrlwebhook.Errored(http.StatusBadRequest, err)
+	}
+	var old ovnv1.Vpc
+	if len(req.OldObject.Raw) != 0 {
+		if err := v.decoder.DecodeRaw(req.OldObject, &old); err != nil {
+			return ctrlwebhook.Errored(http.StatusBadRequest, err)
+		}
+	}
+	if !reflect.DeepEqual(old.Spec.OpenPERouter, vpc.Spec.OpenPERouter) &&
+		(old.Spec.OpenPERouter != nil || len(old.Status.Subnets) != 0) {
+		return ctrlwebhook.Denied("OpenPERouter settings are immutable; configure a new VPC before creating its subnets")
+	}
+	if err := v.validateOpenPERouterVpc(ctx, &vpc); err != nil {
+		return ctrlwebhook.Denied(err.Error())
 	}
 
 	return ctrlwebhook.Allowed("bypass")

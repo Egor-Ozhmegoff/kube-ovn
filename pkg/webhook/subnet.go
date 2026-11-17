@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -30,6 +31,9 @@ func (v *ValidatingHook) SubnetCreateHook(ctx context.Context, req admission.Req
 	}
 	if err := util.ValidateCidrConflict(o, subnetList.Items); err != nil {
 		return admission.Errored(http.StatusConflict, err)
+	}
+	if err := v.validateOpenPERouterSubnet(ctx, &o, subnetList.Items); err != nil {
+		return ctrlwebhook.Denied(err.Error())
 	}
 
 	vpcList := &ovnv1.VpcList{}
@@ -65,6 +69,10 @@ func (v *ValidatingHook) SubnetUpdateHook(ctx context.Context, req admission.Req
 	if err := v.decoder.DecodeRaw(req.OldObject, &oldSubnet); err != nil {
 		return ctrlwebhook.Errored(http.StatusBadRequest, err)
 	}
+	if !reflect.DeepEqual(oldSubnet.Spec.OpenPERouterL2, o.Spec.OpenPERouterL2) &&
+		(oldSubnet.Spec.OpenPERouterL2 != nil || !oldSubnet.Status.V4UsingIPs.EqualInt64(0) || !oldSubnet.Status.V6UsingIPs.EqualInt64(0)) {
+		return ctrlwebhook.Denied("OpenPERouter L2 attachment is immutable once configured or used")
+	}
 	if (o.Spec.Gateway != oldSubnet.Spec.Gateway) && (!o.Status.V4UsingIPs.EqualInt64(0) || !o.Status.V6UsingIPs.EqualInt64(0)) {
 		return ctrlwebhook.Denied("can't update gateway of cidr when any IPs in Using")
 	}
@@ -98,6 +106,9 @@ func (v *ValidatingHook) SubnetUpdateHook(ctx context.Context, req admission.Req
 	}
 	if err := util.ValidateCidrConflict(o, subnetList.Items); err != nil {
 		return admission.Errored(http.StatusConflict, err)
+	}
+	if err := v.validateOpenPERouterSubnet(ctx, &o, subnetList.Items); err != nil {
+		return ctrlwebhook.Denied(err.Error())
 	}
 
 	return ctrlwebhook.Allowed("bypass")

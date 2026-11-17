@@ -1013,6 +1013,18 @@ func (c *Controller) setIptables() error {
 			}
 		}
 
+		// Reserve these interface prefixes for the local OpenPERouter attachment.
+		// Match output interfaces rather than tenant CIDRs, which may overlap.
+		if c.config.EnableOpenPERouter {
+			var localRules []util.IPTableRule
+			for _, iface := range []string{"host-e-+", "oprr+"} {
+				localRules = append(localRules,
+					util.IPTableRule{Table: NAT, Chain: OvnPostrouting, Rule: []string{"-o", iface, "-j", "RETURN"}},
+					util.IPTableRule{Table: "filter", Chain: "FORWARD", Rule: []string{"-o", iface, "-j", "ACCEPT"}})
+			}
+			iptablesRules = append(localRules, iptablesRules...)
+		}
+
 		var natPreroutingRules, natPostroutingRules, ovnMasqueradeRules, manglePostroutingRules []util.IPTableRule
 		for _, rule := range iptablesRules {
 			if rule.Table == NAT {

@@ -1,0 +1,78 @@
+# Apply only in the disposable lab after native bootstrap is healthy.
+apiVersion: kubeovn.io/v1
+kind: Vpc
+metadata:
+  name: tenant-a
+spec:
+  namespaces: [tenant-a-pods, tenant-a-blue, tenant-a-green]
+  openPERouter:
+    mode: OpenPERouter
+    vrf: tenant-a
+    l3vniName: tenant-a
+    l3vni: 10001
+    transitCIDRs: [169.254.32.0/20]
+    hostSessionCIDRs: [169.254.16.0/20]
+    routerASN: 64514
+    hostASN: 64515
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a-pods
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a-blue
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a-green
+---
+apiVersion: kubeovn.io/v1
+kind: Subnet
+metadata:
+  name: tenant-a-pods
+spec:
+  vpc: tenant-a
+  protocol: IPv4
+  cidrBlock: 10.101.3.0/24
+  gateway: 10.101.3.1
+  namespaces: [tenant-a-pods]
+  natOutgoing: false
+  gatewayType: distributed
+---
+apiVersion: kubeovn.io/v1
+kind: Subnet
+metadata:
+  name: tenant-a-blue
+spec:
+  vpc: tenant-a
+  protocol: IPv4
+  cidrBlock: 10.101.1.0/24
+  gateway: 10.101.1.1
+  namespaces: [tenant-a-blue]
+  natOutgoing: false
+  gatewayType: distributed
+  openPERouterL2:
+    l2vniName: tenant-a-blue
+    vni: 10101
+    gatewayMAC: '02:00:05:00:03:00'
+---
+apiVersion: kubeovn.io/v1
+kind: Subnet
+metadata:
+  name: tenant-a-green
+spec:
+  vpc: tenant-a
+  protocol: IPv4
+  cidrBlock: 10.101.2.0/24
+  gateway: 10.101.2.1
+  namespaces: [tenant-a-green]
+  natOutgoing: false
+  gatewayType: distributed
+  openPERouterL2:
+    l2vniName: tenant-a-green
+    vni: 10102
+    gatewayMAC: '02:00:05:00:03:00'

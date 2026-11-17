@@ -1407,3 +1407,6 @@ ipsec:
     limits:
       cpu: 1000m
       memory: 256Mi
+openperouter:
+  enabled: false
+  bootstrapDir: /var/lib/openperouter

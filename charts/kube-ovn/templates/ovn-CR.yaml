@@ -360,6 +360,9 @@ rules:
       - "kubeovn.io"
     resources:
       - subnets
+      {{- if .Values.openperouter.enabled }}
+      - vpcs
+      {{- end }}
       - vlans
       - provider-networks
     verbs:

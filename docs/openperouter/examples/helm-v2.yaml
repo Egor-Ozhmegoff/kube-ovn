@@ -1,0 +1,6 @@
+openperouter:
+  enabled: true
+  bootstrapDir: /var/lib/openperouter
+networking:
+  networkType: geneve
+  tunnelType: vxlan

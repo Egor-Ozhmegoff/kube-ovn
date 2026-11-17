@@ -192,6 +192,13 @@ spec:
           - --kubelet-dir={{ .Values.kubelet_conf.KUBELET_DIR }}
           - --enable-tproxy={{ .Values.func.ENABLE_TPROXY }}
           - --enable-recompute={{ .Values.func.ENABLE_RECOMPUTE }}
+          {{- if .Values.openperouter.enabled }}
+          {{- if or (eq .Values.networking.NETWORK_TYPE "vlan") (ne .Values.networking.TUNNEL_TYPE "vxlan") }}
+          {{- fail "OpenPERouter integration requires overlay networking and networking.TUNNEL_TYPE=vxlan" }}
+          {{- end }}
+          - --enable-openperouter=true
+          - {{ printf "--openperouter-bootstrap=%s" .Values.openperouter.bootstrapDir | quote }}
+          {{- end }}
           - --secure-serving={{- .Values.func.SECURE_SERVING }}
           {{- if or .Values.networking.TLS_MIN_VERSION .Values.networking.TLS_MAX_VERSION .Values.networking.TLS_CIPHER_SUITES }}
           {{- include "kubeovn.componentTLSArgs" . | nindent 10 }}
@@ -260,6 +267,14 @@ spec:
           - mountPath: /etc/openvswitch
             name: systemid
             readOnly: true
+          {{- if .Values.openperouter.enabled }}
+          - mountPath: {{ .Values.openperouter.bootstrapDir | quote }}
+            name: openperouter-bootstrap
+            readOnly: true
+          - mountPath: /var/run/tls
+            name: openperouter-tls
+            readOnly: true
+          {{- end }}
           - mountPath: /run/openvswitch
             name: host-run-ovs
             mountPropagation: HostToContainer
@@ -468,5 +483,15 @@ spec:
           hostPath:
             path: {{ .Values.OVN_IPSEC_KEY_DIR }}
             type: DirectoryOrCreate
+        {{- if .Values.openperouter.enabled }}
+        - name: openperouter-bootstrap
+          hostPath:
+            path: {{ .Values.openperouter.bootstrapDir | quote }}
+            type: Directory
+        - name: openperouter-tls
+          secret:
+            optional: true
+            secretName: kube-ovn-tls
+        {{- end }}
 
 {{- end }}

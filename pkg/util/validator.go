@@ -12,9 +12,16 @@ import (
 	"k8s.io/klog/v2"
 
 	kubeovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
+	"github.com/kubeovn/kube-ovn/pkg/openperouter"
 )
 
 func ValidateSubnet(subnet kubeovnv1.Subnet) error {
+	if err := openperouter.ValidateL2(subnet.Spec.OpenPERouterL2); err != nil {
+		return err
+	}
+	if subnet.Spec.OpenPERouterL2 != nil && (subnet.Spec.Vlan != "" || subnet.Spec.NatOutgoing || subnet.Spec.U2OInterconnection || subnet.Spec.ExternalEgressGateway != "") {
+		return errors.New("OpenPERouter L2 cannot use VLAN, NAT, U2O or an external egress gateway")
+	}
 	// Allow underlay subnets (with vlan) to be created without a CIDRBlock.
 	// Such subnets only allocate a MAC address and rely on an external DHCP
 	// server (BYO-DHCP) for IP assignment.
@@ -608,6 +615,15 @@ func ValidateCidrConflict(subnet kubeovnv1.Subnet, subnetList []kubeovnv1.Subnet
 }
 
 func ValidateVpc(vpc *kubeovnv1.Vpc) error {
+	if vpc.Spec.OpenPERouter != nil {
+		if err := openperouter.Validate(vpc.Spec.OpenPERouter); err != nil {
+			return err
+		}
+		if vpc.Spec.EnableExternal || vpc.Spec.EnableBfd || vpc.Spec.BFDPort.IsEnabled() || len(vpc.Spec.ExtraExternalSubnets) != 0 ||
+			len(vpc.Spec.StaticRoutes) != 0 || len(vpc.Spec.PolicyRoutes) != 0 || len(vpc.Spec.VpcPeerings) != 0 {
+			return errors.New("OpenPERouter owns VPC egress: legacy gateways, static/policy routes and VPC peering must be disabled")
+		}
+	}
 	for _, item := range vpc.Spec.StaticRoutes {
 		if item.Policy != "" && item.Policy != kubeovnv1.PolicyDst && item.Policy != kubeovnv1.PolicySrc {
 			return fmt.Errorf("unknown policy type: %s", item.Policy)

@@ -59,3 +59,16 @@ and use the following options to install this Helm-chart:
 
 `OVN_IPSEC_KEY_DIR` only becomes a host mount when `func.ENABLE_OVN_IPSEC` is enabled, but setting it up
 front keeps IPSEC from failing later with `mkdir /etc/origin: read-only file system`.
+
+
+## Experimental OpenPERouter integration
+
+`openperouter.enabled` defaults to `false`. Enabling it requires the internal
+OVN network type to be `vxlan`, a systemd-managed OpenPERouter bootstrap at
+`openperouter.bootstrapDir` (default `/var/lib/openperouter`), and node index
+and router MAC annotations. The bootstrap directory is mounted read-only;
+this chart does not install OpenPERouter or manage its FRR/VXLAN namespace.
+See [the integration design and release blockers](../../docs/openperouter/implementation.md)
+and [disposable lab examples](../../docs/openperouter/examples/README.md).
+The selected OpenPERouter commit and remaining dataplane limitations must be
+reviewed before enabling this experimental mode.

@@ -1,0 +1,39 @@
+# Disposable lab only. Pin image digests in the lab report before execution.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-a
+  namespace: tenant-a-pods
+  labels: {app: openperouter-probe}
+spec:
+  nodeName: node-a
+  containers:
+    - name: probe
+      image: busybox:1.37.0
+      command: [sh, -c, 'mkdir -p /www; hostname > /www/index.html; exec httpd -f -p 8080 -h /www']
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-b
+  namespace: tenant-a-pods
+  labels: {app: openperouter-probe}
+spec:
+  nodeName: node-b
+  containers:
+    - name: probe
+      image: busybox:1.37.0
+      command: [sh, -c, 'mkdir -p /www; hostname > /www/index.html; exec httpd -f -p 8080 -h /www']
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: probes
+  namespace: tenant-a-pods
+  annotations:
+    ovn.kubernetes.io/vpc: tenant-a
+spec:
+  selector: {app: openperouter-probe}
+  ports:
+    - port: 8080
+      targetPort: 8080

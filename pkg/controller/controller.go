@@ -43,6 +43,7 @@ import (
 	kubeovnlister "github.com/kubeovn/kube-ovn/pkg/client/listers/kubeovn/v1"
 	"github.com/kubeovn/kube-ovn/pkg/informer"
 	ovnipam "github.com/kubeovn/kube-ovn/pkg/ipam"
+	"github.com/kubeovn/kube-ovn/pkg/openperouter"
 	"github.com/kubeovn/kube-ovn/pkg/ovs"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 	"github.com/kubeovn/kube-ovn/pkg/util"
@@ -192,6 +193,8 @@ type Controller struct {
 	subnetRuntimeEvents     *subnetRuntimeEventFanout
 	syncVirtualPortsQueue   workqueue.TypedRateLimitingInterface[string]
 	subnetKeyMutex          keymutex.KeyMutex
+	openPERouterL2KeyMutex  keymutex.KeyMutex
+	openPERouterMACGuard    openperouter.MACGuard
 
 	ippoolLister            kubeovnlister.IPPoolLister
 	ippoolSynced            cache.InformerSynced
@@ -623,6 +626,7 @@ func run(ctx context.Context, config *Configuration, startRuntime RuntimeStarter
 		subnetRuntimeEvents:     newSubnetRuntimeEventFanoutForConfig(config),
 		syncVirtualPortsQueue:   newTypedRateLimitingQueue[string]("SyncVirtualPort", nil),
 		subnetKeyMutex:          keymutex.NewHashed(numKeyLocks),
+		openPERouterL2KeyMutex:  keymutex.NewHashed(numKeyLocks),
 
 		ippoolLister:            ippoolInformer.Lister(),
 		ippoolSynced:            ippoolInformer.Informer().HasSynced,
@@ -1782,6 +1786,9 @@ func (c *Controller) startWorkers(ctx context.Context) {
 
 	if c.config.GCInterval != 0 {
 		go wait.Until(c.periodicGC, time.Duration(c.config.GCInterval)*time.Second, ctx.Done())
+	}
+	if c.config.EnableOpenPERouter {
+		go wait.Until(c.reconcileOpenPERouterAttachments, 10*time.Second, ctx.Done())
 	}
 
 	go wait.Until(func() {

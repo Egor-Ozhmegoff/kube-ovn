@@ -175,6 +175,7 @@ type Configuration struct {
 	CertManagerIPSecCert        bool
 	CertManagerIssuerName       string
 	EnableLiveMigrationOptimize bool
+	EnableOpenPERouter          bool
 
 	ExternalGatewaySwitch   string
 	ExternalGatewayConfigNS string
@@ -296,6 +297,7 @@ func ParseFlags() (*Configuration, error) {
 		argCertManagerIPSecCert        = pflag.Bool("cert-manager-ipsec-cert", false, "Whether to use cert-manager for signing IPSec certificates")
 		argCertManagerIssuerName       = pflag.String("cert-manager-issuer-name", "kube-ovn", "cert-manager ClusterIssuer for authorized IPsec requests")
 		argEnableLiveMigrationOptimize = pflag.Bool("enable-live-migration-optimize", true, "Whether to enable kubevirt live migration optimize")
+		argEnableOpenPERouter          = pflag.Bool("enable-openperouter", false, "Enable experimental local OpenPERouter integration")
 
 		argExternalGatewayConfigNS = pflag.String("external-gateway-config-ns", "kube-system", "The namespace of configmap external-gateway-config")
 		argExternalGatewaySwitch   = pflag.String("external-gateway-switch", "external", "The name of the external gateway switch, which is an OVS bridge that provides external network access")
@@ -421,6 +423,7 @@ func ParseFlags() (*Configuration, error) {
 		CertManagerIPSecCert:        *argCertManagerIPSecCert,
 		CertManagerIssuerName:       *argCertManagerIssuerName,
 		EnableLiveMigrationOptimize: *argEnableLiveMigrationOptimize,
+		EnableOpenPERouter:          *argEnableOpenPERouter,
 		BfdMinTx:                    *argBfdMinTx,
 		BfdMinRx:                    *argBfdMinRx,
 		BfdDetectMult:               *argBfdDetectMult,

@@ -214,6 +214,13 @@ spec:
           - --kubelet-dir={{ .Values.kubelet.directory }}
           - --enable-tproxy={{ .Values.features.enableTproxy }}
           - --enable-recompute={{ .Values.features.enableRecompute }}
+          {{- if .Values.openperouter.enabled }}
+          {{- if or (eq .Values.networking.networkType "vlan") (ne .Values.networking.tunnelType "vxlan") }}
+          {{- fail "OpenPERouter integration requires overlay networking and networking.tunnelType=vxlan" }}
+          {{- end }}
+          - --enable-openperouter=true
+          - {{ printf "--openperouter-bootstrap=%s" .Values.openperouter.bootstrapDir | quote }}
+          {{- end }}
           - --secure-serving={{- .Values.features.enableSecureServing }}
           {{- if or .Values.networking.tlsMinVersion .Values.networking.tlsMaxVersion .Values.networking.tlsCipherSuites }}
           {{- include "kubeovn.componentTLSArgs" . | nindent 10 }}
@@ -272,6 +279,14 @@ spec:
           {{- if .Values.features.enableTproxy }}
           - name: tproxy-socket
             mountPath: /run/kube-ovn-tproxy
+          {{- end }}
+          {{- if .Values.openperouter.enabled }}
+          - mountPath: {{ .Values.openperouter.bootstrapDir | quote }}
+            name: openperouter-bootstrap
+            readOnly: true
+          - mountPath: /var/run/tls
+            name: openperouter-tls
+            readOnly: true
           {{- end }}
           - name: usr-local-sbin
             mountPath: /usr/local/sbin
@@ -428,6 +443,16 @@ spec:
       nodeSelector:
         kubernetes.io/os: "linux"
       volumes:
+        {{- if .Values.openperouter.enabled }}
+        - name: openperouter-bootstrap
+          hostPath:
+            path: {{ .Values.openperouter.bootstrapDir | quote }}
+            type: Directory
+        - name: openperouter-tls
+          secret:
+            optional: true
+            secretName: kube-ovn-tls
+        {{- end }}
         - name: ipsec-protection
           hostPath:
             path: /run/kube-ovn-ipsec-protection

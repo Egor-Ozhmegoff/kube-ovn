@@ -1,0 +1,69 @@
+{
+  "repository": "https://github.com/Egor-Ozhmegoff/openperouter",
+  "branch": "Mac_setings_for_l2vni_and_l3vni",
+  "commit": "60a1285935b10eb0b1cf07e4533faefedde3d4d3",
+  "reviewDate": "2026-11-16",
+  "sha256": {
+    "api/v1alpha1/l2vni_types.go": "9c027e249793cffd749592dee10dc57f18f9327ec51958d607dd61fb6e88630f",
+    "api/v1alpha1/l3vni_types.go": "53f147a35867026f77822eb7aafe2a8ca6c1b8ca98cebd2a261a98405f38d056",
+    "api/v1alpha1/hostsession.go": "452c218833a495e49cec3c1d17f9aef9822a7d388b92691976ecdb084ca860b8",
+    "api/v1alpha1/neighbor.go": "d0c6188dbf0dfb00ddf4a30bb3e617ca68dd0705895439d348fc9c00286e02b1",
+    "api/v1alpha1/underlay_types.go": "a6d7fb5f1e73c3df6a80091c16a8d6c2b58179926651c4c58f31b757ea09b71f",
+    "internal/hostnetwork/bridge.go": "b97e79ea4ec459a9bb6d7f21722cfae70fc9001b8a2929c199795c66136573d0",
+    "internal/hostnetwork/vni.go": "577744795859f1ba773a3db7cc125d09fb4ca4b7e781f5b0c060c3b39d6dd5d9",
+    "internal/hostnetwork/veth.go": "780ea737c08783c315c9e50dffab2f0c921393a937346a09bd5f7b2f793ba420",
+    "internal/hostnetwork/vrf.go": "5093fff7528834b51c262c1e8eac9b2c336c84ea68bfeaa81dd8bd2a0f8763f9",
+    "internal/frr/templates/frr.tmpl": "1ab3bb5729fb36c579e4dcc88902fe047bf4dd89b89537c27a41dd6608346d8e",
+    "internal/frr/templates/localneighbor.tmpl": "b23cabcb99ff525d5455dd17ceb232c6c0abcd4e59035a2ae4217c3381e89201",
+    "internal/frr/templates/vni.tmpl": "d22540e4ca16f1870ef390054163b6772cd6e628c6e8e6e1f0e07158a4bed49f",
+    "Dockerfile": "4afc3d269aa49a3a00db9b9e03ac968eaae67079861a3cf904aafcba35aab435",
+    "systemdmode/quadlets/routerpod.pod": "56bc227b52f4370f03afe16c60e34a4eb575b272273ad8f5a288aa33edc7bef5",
+    "systemdmode/quadlets/controller.container": "f72d471600205e4709a4ed161b65dc6c2a03ba30704aacae1a9a5610061b4bf0",
+    "internal/staticconfiguration/reader.go": "d7cc12ffd70a2703e3ca3289592e5ebdeb9f8231d6e20ebce7e92020d6f58fca",
+    "api/static/config.go": "cbc6c455fc548bc4fd44d03e2febd090180997e9bf6b5ddb75308c926814edca",
+    "config/crd/bases/network.openperouter.io_l2vnis.yaml": "3cd7d9f05c99eb1b33a9dad2123e96ccb3e344ec5ba737453f9dad96a2de849b",
+    "config/crd/bases/network.openperouter.io_l3vnis.yaml": "e61ad406e2f37e40aac6096ace88bfe41024abf509059d6da0ea0126d1a56550",
+    "0001-Revert-tools-Allow-deleting-of-interfaces.patch": "9237151cb508782b294e79222bc3dbd0beb876771bd1c9e3db4c6efdc8ecbd56",
+    "internal/hostnetwork/router_mac.go": "e103d8b340e1ea887fed418338b5a0cc45f1f6efde0ab1fb1ff9575089e02c6b",
+    "internal/hostnetwork/router_mac_test.go": "5e6aba58b69fb5266fc5da56183790a82f25dc1b46a6da8435cd8ba4afa6dc3e",
+    "internal/hostnetwork/gateway_mac_test.go": "8d23079f2c8bcb99d1f3811c714cc123e6f92b571f78ae4d39448d19b16bcb30",
+    "internal/hostnetwork/vni_test.go": "c3681dcfee4aea6a4cdea27b6259ab77475bdd5d7d640076871b676e9ec80d77",
+    "internal/conversion/host_conversion.go": "4ed46d518a2955706206f049533210de904bf2a12b335db85503bf03f1c56b56",
+    "internal/conversion/validate_vni.go": "adb35e4b9e1774fcc457a4775c5f7600c73cb1d7894417e0e5ff77f683e8fdd6",
+    "internal/controller/routerconfiguration/host_config.go": "4e775ddaf59bdce95c2238a12f06085ad168dc2186aae040a7b76c785548c03f",
+    "cmd/hostcontroller/main.go": "580fab03b5241a9f85219799a663bd24e07215aa1491ad4c36bde6dbe3ddcc34",
+    "internal/controller/routerconfiguration/reconcile.go": "7c5ab596bb05c2b7d76008407e3f7a3d6e3c581bdd9f76013b1838de6874516f",
+    "api/v1alpha1/rawfrrconfig_types.go": "56130273cc9f3bc8e20e3ad390f874d11681fc23f8cf3a9f55a568a6b81bd3cf"
+  },
+  "blockers": [],
+  "limitations": [
+    "gatewayMAC requires gatewayIPs and is immutable, including adding/removing the field",
+    "routerMAC is node-local static/CLI configuration, kernel datapath only; cross-node uniqueness is not enforced",
+    "routerMAC startup configuration reload and end-to-end FRR RMAC convergence have not been tested"
+  ],
+  "capabilities": [
+    "L2VNISpec.gatewayMAC applied by owner reconciler before attaching VXLAN",
+    "NodeConfig.routerMAC propagated to every kernel L3VNI bridge; reconciler reapplies on drift/recreation"
+  ],
+  "pendingValidation": [
+    "OVN local L3 handoff and return-path loop prevention",
+    "OVN internal VXLAN plus EVPN L2 split-horizon, local MAC/IP ownership and BUM deduplication",
+    "Workload availability driven host BGP announcements and migration",
+    "Fail-closed tenant VRF FIB and external route withdrawal",
+    "Services, NetworkPolicy, MTU, restart and API-outage scenarios"
+  ],
+  "integrationBlockers": [
+    {
+      "id": "pe-vrf-recreate-fail-closed",
+      "source": "internal/hostnetwork/vrf.go:setupVRF/createVRF",
+      "reason": "No kernel terminal defaults or FIB readiness barrier before tenant ingress; RawFRRConfig desired text is insufficient to guarantee isolation through VRF recreation.",
+      "minimalChange": "Native owner installs persistent IPv4/IPv6 terminal defaults before opening ingress and reapplies them on recreation."
+    },
+    {
+      "id": "endpoint-type2-withdraw-lifecycle",
+      "source": "api/v1alpha1/l2vni_types.go:L2VNISpec",
+      "reason": "Segment API provides no endpoint availability lease/delete; prompt Type-2 cleanup on workload delete is not guaranteed by native aging.",
+      "minimalChange": "Validate native mobility/aging timing; if prompt delete is required, add endpoint lifecycle API to the native FDB/FRR owner."
+    }
+  ]
+}

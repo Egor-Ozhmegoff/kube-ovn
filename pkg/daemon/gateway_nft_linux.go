@@ -414,7 +414,7 @@ func addNFTSetElement(tx *knftables.Transaction, family knftables.Family, table,
 	tx.Add(&knftables.Element{Family: family, Table: table, Set: set, Key: key})
 }
 
-func (*nftGatewayBackend) renderNFTNATRules(tx *knftables.Transaction, snapshot nftFamilySnapshot) {
+func (b *nftGatewayBackend) renderNFTNATRules(tx *knftables.Transaction, snapshot nftFamilySnapshot) {
 	family, table := snapshot.Family, nftSnapshotTable(snapshot)
 	ipToken := "ip"
 	if family == knftables.IPv6Family {
@@ -422,6 +422,13 @@ func (*nftGatewayBackend) renderNFTNATRules(tx *knftables.Transaction, snapshot 
 	}
 	originalDestination := "ct original " + ipToken + " daddr"
 	originalSource := "ct original " + ipToken + " saddr"
+	if b.controller != nil && b.controller.config.EnableOpenPERouter {
+		for _, chain := range []string{"nat-host-service", "nat-postrouting"} {
+			for _, iface := range []string{"host-e-*", "oprr*"} {
+				addNFTRule(tx, family, table, chain, fmt.Sprintf("oifname %q return", iface), "openperouter-preserve-source:"+iface)
+			}
+		}
+	}
 
 	if snapshot.NodeInternalIP != "" {
 		addNFTRule(tx, family, table, "nat-host-service", knftables.Concat(
@@ -549,9 +556,14 @@ func nftMetaMarkSet(value, mask uint32) string {
 	return fmt.Sprintf("meta mark set ((meta mark & %#x) | %#x)", ^mask, value&mask)
 }
 
-func (*nftGatewayBackend) renderNFTFilterAndMangleRules(tx *knftables.Transaction, snapshot nftFamilySnapshot, includeCounterObjects bool) {
+func (b *nftGatewayBackend) renderNFTFilterAndMangleRules(tx *knftables.Transaction, snapshot nftFamilySnapshot, includeCounterObjects bool) {
 	family, table := snapshot.Family, nftSnapshotTable(snapshot)
 	ipToken := nftIPToken(family)
+	if b.controller != nil && b.controller.config.EnableOpenPERouter {
+		for _, iface := range []string{"host-e-*", "oprr*"} {
+			addNFTRule(tx, family, table, "filter-forward", fmt.Sprintf("oifname %q accept", iface), "openperouter-local-forward:"+iface)
+		}
+	}
 	for _, counter := range snapshot.SubnetCounters {
 		egress, ingress := nftSubnetCounterNames(counter)
 		if includeCounterObjects {

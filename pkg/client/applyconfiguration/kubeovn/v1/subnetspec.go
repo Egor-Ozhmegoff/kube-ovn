@@ -25,6 +25,8 @@ import (
 // SubnetSpecApplyConfiguration represents a declarative configuration of the SubnetSpec type for use
 // with apply.
 type SubnetSpecApplyConfiguration struct {
+	// Optional external L2 attachment; omitted for routed-only Pod networks.
+	OpenPERouterL2 *OpenPERouterL2AttachmentApplyConfiguration `json:"openPERouterL2,omitempty"`
 	// Whether this is the default subnet.
 	Default *bool `json:"default,omitempty"`
 	// VPC name for the subnet. Immutable after creation.
@@ -59,7 +61,11 @@ type SubnetSpecApplyConfiguration struct {
 	Mtu *uint32 `json:"mtu,omitempty"`
 	// Whether the subnet is private.
 	Private *bool `json:"private,omitempty"`
-	// Routed configures pods with /32 (or /128) addresses and on-link gateway routes.
+	// Routed configures pods with /32 (IPv4) or /128 (IPv6) addresses and
+	// on-link routes to the gateway. Same-subnet traffic is forced through the
+	// OVN logical router instead of direct L2. Requires an OVN logical router
+	// port (overlay, or underlay with logicalGateway / u2oInterconnection).
+	// Existing pods must be recreated after enabling or disabling this field.
 	Routed *bool `json:"routed,omitempty"`
 	// Allowed subnets for east-west traffic.
 	AllowSubnets []string `json:"allowSubnets,omitempty"`
@@ -115,6 +121,14 @@ type SubnetSpecApplyConfiguration struct {
 // apply.
 func SubnetSpec() *SubnetSpecApplyConfiguration {
 	return &SubnetSpecApplyConfiguration{}
+}
+
+// WithOpenPERouterL2 sets the OpenPERouterL2 field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the OpenPERouterL2 field is set to the value of the last call.
+func (b *SubnetSpecApplyConfiguration) WithOpenPERouterL2(value *OpenPERouterL2AttachmentApplyConfiguration) *SubnetSpecApplyConfiguration {
+	b.OpenPERouterL2 = value
+	return b
 }
 
 // WithDefault sets the Default field in the declarative configuration to the given value
