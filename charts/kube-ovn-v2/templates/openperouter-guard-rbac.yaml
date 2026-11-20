@@ -1,0 +1,25 @@
+{{- if .Values.openperouter.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kube-ovn-openperouter-guards
+  namespace: {{ .Values.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kube-ovn-openperouter-guards
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kube-ovn-openperouter-guards
+subjects:
+  - kind: ServiceAccount
+    name: kube-ovn-cni
+    namespace: {{ .Values.namespace }}
+{{- end }}
