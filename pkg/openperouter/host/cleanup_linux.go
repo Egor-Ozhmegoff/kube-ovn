@@ -8,7 +8,6 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"github.com/kubeovn/kube-ovn/pkg/openperouter"
-	"github.com/kubeovn/kube-ovn/pkg/ovs"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/vswitch"
 )
@@ -29,7 +28,7 @@ func Cleanup(ctx context.Context, provider table.Provider, vpcUIDs, subnetUIDs m
 		if vpcUIDs[uid] && (iface.ExternalIDs["subnet-uid"] == "" || subnetUIDs[iface.ExternalIDs["subnet-uid"]]) {
 			continue
 		}
-		if err := ovs.DeleteVswitchPort(ctx, provider, iface.Name); err != nil {
+		if err := removeAttachment(ctx, provider, iface); err != nil {
 			return err
 		}
 	}
@@ -53,6 +52,12 @@ func Cleanup(ctx context.Context, provider table.Provider, vpcUIDs, subnetUIDs m
 			if !owned[slave.Attrs().Name] && (slave.Type() != "veth" || !strings.HasPrefix(slave.Attrs().Name, "host-e-")) {
 				return fmt.Errorf("refuse to remove VRF %s with foreign slave %s", vrf.Name, slave.Attrs().Name)
 			}
+			if err := EnsureIsolation(slave.Attrs().Name, vrf.Table); err != nil {
+				return err
+			}
+			if err := netlink.LinkSetDown(slave); err != nil {
+				return err
+			}
 			if err := netlink.LinkSetNoMaster(slave); err != nil {
 				return err
 			}
@@ -61,5 +66,8 @@ func Cleanup(ctx context.Context, provider table.Provider, vpcUIDs, subnetUIDs m
 			return err
 		}
 	}
-	return nil
+	if err := cleanupL2Paths(vpcUIDs, subnetUIDs); err != nil {
+		return err
+	}
+	return cleanupReflection(ctx, subnetUIDs)
 }

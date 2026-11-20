@@ -123,6 +123,7 @@ spec:
                 - NET_RAW
                 - SYS_NICE
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: ENABLE_OVN_IPSEC
               value: "{{ .Values.features.enableOvnIpsec }}"
             - name: ENABLE_SSL

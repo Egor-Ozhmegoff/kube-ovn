@@ -3,8 +3,9 @@
 Выбрана ветка
 [`Egor-Ozhmegoff/openperouter:Mac_setings_for_l2vni_and_l3vni`](https://github.com/Egor-Ozhmegoff/openperouter/tree/Mac_setings_for_l2vni_and_l3vni),
 закреплён commit **`60a1285935b10eb0b1cf07e4533faefedde3d4d3`**.
-Kube-OVN остаётся в ветке `openperouter`, HEAD
-`8bd912fefaa0a497384bde2ad2c42906e3a14c9c`.
+Kube-OVN: ветка `openperouter`, база текущей доработки
+`b7257133dd552bda1a05f59b2b716fadd8bf8223`.
+Локальная MAC-ветка OpenPERouter проверена без переключения его рабочей копии.
 
 **Добавлен экспериментальный runtime Kube-OVN**, API/CRD, apply configurations,
 валидация, opt-in Helm и тесты. По умолчанию режим выключен. Обязательные
@@ -14,10 +15,15 @@ PE VRF имеет конкретный пробел в API/реализации 
 Текущий datapath, владельцы, lifecycle, ограничения Services/L2 и оценка
 250/1000 нод: [implementation.md](implementation.md).
 Результаты проверок: [validation-results.md](validation-results.md).
-На Linux выполнены полный repository suite, native kernel tests OpenPERouter,
-реальная host-VRF BGP session и двухнодовый OVN component lab: 16/17 packet
-checks прошли, IPv6 ND reflection провален. Полные Cisco/Kubernetes/KubeVirt
-E2E не выполнены; см. validation-results.md.
+Предыдущая доработка разделила Fence/Cleanup и добавила распределённый допуск
+нового MAC до активации endpoint и безопасное повторное использование L2VNI.
+Текущая доработка membership убирает зависимость admission от регистрации
+Kubernetes Nodes: участники вступают только через daemon после закрытия пути.
+Проверки предыдущей доработки включали repository suite, OVS/kernel regressions,
+delayed-filter packet test и двухнодовый OVN component lab. Предыдущие native
+OpenPERouter kernel и host-VRF BGP tests привязаны к своим исходникам; они
+не считаются повтором текущей задачи. Актуальные результаты и skips —
+в validation-results.md.
 
 ## Подтверждённые изменения MAC
 
@@ -78,8 +84,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test/unittest -p 'test
 Go и Helm скачаны напрямую в `/private/tmp` с проверкой SHA256; системный Go
 и настройки proxy не менялись. Source audit не является dataplane test.
 
-Release blockers: IPv6 ND reflection, гарантированный terminal drop при
-native VRF recreate и детерминированный Type-2 cleanup. Cisco, Kubernetes
+Отложенная зависимость: kernel defaults при native PE VRF recreate. Она
+не исправляется в Kube-OVN. Native Type-2 lifecycle API отсутствует;
+допуск новых MAC теперь ждёт подтверждения host reflection guards; throughput при churn требует измерений. Cisco, Kubernetes
 Service/NetworkPolicy и KubeVirt migration требуют полной E2E проверки.
 Минимальные необходимые изменения native owner перечислены в
 [implementation.md](implementation.md#блокеры-и-неподтверждённые-свойства).

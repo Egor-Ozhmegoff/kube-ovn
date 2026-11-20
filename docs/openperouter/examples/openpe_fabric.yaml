@@ -4,7 +4,7 @@
 # The systemd service reads /var/lib/openperouter/openpe_*.yaml.
 underlays:
   - asn: 64514
-    routerIDCIDR: 192.0.2.0/24
+    routerIDCIDR: 198.18.0.0/20
     tunnelEndpoint:
       cidrs:
         - 198.18.0.0/20

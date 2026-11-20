@@ -4,7 +4,7 @@ import json,os,pathlib,subprocess,tempfile,time,traceback
 root=pathlib.Path(os.environ.get('KUBE_OVN_OPENPEROUTER_RUN_ROOT', '/tmp/kubeovn-openperouter-full'))
 results=root/'results';config=tempfile.mkdtemp(prefix='kubeovn-opr-dp-docker-',dir='/tmp')
 docker=['docker','--config',config,'--host','unix:///var/run/docker.sock']
-image='kubeovn-openperouter-full-checks:20261116'
+image=os.environ.get('KUBE_OVN_OPENPEROUTER_LAB_IMAGE', 'kubeovn-openperouter-full-checks:20261116')
 network='kubeovn-opr-dp-net'
 names={n:'kubeovn-opr-dp-'+n for n in ['db','node-a','node-b']}
 created=[];network_created=False;checks=[]
@@ -103,7 +103,9 @@ try:
    sh(node,f'ip netns add {ns}; ip link add {host} type veth peer name eth0 netns {ns}; ip link set {host} mtu 1400 up; ip -n {ns} link set lo up; ip -n {ns} link set eth0 address {mac} mtu 1400 up; ip -n {ns} address add {prefix}.{11+i}/24 dev eth0; ip -n {ns} route add default via {prefix}.1; ovs-vsctl add-port br-int {host} -- set Interface {host} external_ids:iface-id={subnet}-{suffix}')
   for subnet,part in [('pods',3),('blue',1)]:
    sh(node,f'ip netns exec {subnet} sysctl -qw net.ipv6.conf.all.disable_ipv6=0 net.ipv6.conf.default.disable_ipv6=0 net.ipv6.conf.eth0.disable_ipv6=0; ip -n {subnet} -6 address add fd00:101:{part}::{11+i}/64 dev eth0 nodad; ip -n {subnet} -6 route add default via fd00:101:{part}::1')
-  sh(node,f'ip netns add fabric; ip link add vfab type veth peer name eth0 netns fabric; ip link set vfab up; ip -n fabric link set eth0 up; ovs-vsctl add-port br-int vfab -- set Interface vfab external_ids:iface-id={config_data["l2Port"]}')
+  sh(node,f'ip netns add fabric; ip link add host-e-10101 type veth peer name eth0 netns fabric; ip link set host-e-10101 up; ip -n fabric link set eth0 up')
+ for node in ['node-a','node-b']:
+  ex(node,'/lab/dataplane-helper','l2-host-sb','tcp:172.30.246.10:6642',node,'disposable-blue','blue','host-e-10101')
  wait(lambda: len(sb('--bare','--columns=name','list','Chassis').split())==2)
  wait(lambda: 'true' in sb('get','Port_Binding','pods-a','up'))
  wait(lambda: 'true' in sb('get','Port_Binding','pods-b','up'))
@@ -171,6 +173,29 @@ try:
   ex('node-b','ip','netns','exec','fabric','python3','/lab/source/hack/openperouter/packets.py','nd','eth0','02:00:00:00:01:11','33:33:00:00:00:01','fd00:101:1::11','ff02::1')
   counts=finish(caps);return require(all(c==0 for c in counts.values()),counts)
  record('l2-reflected-ipv6-nd-source-drop',reflection_nd)
+ for frame_type in ['arp','rarp']:
+  def reflected_control(frame_type=frame_type):
+   token='KOPR-REFLECT-'+frame_type
+   caps=[capture(n,'blue','eth0',frame_type,token,'reflection-'+frame_type+'-'+n) for n in ['node-a','node-b']]
+   ex('node-b','ip','netns','exec','fabric','python3','/lab/source/hack/openperouter/packets.py',frame_type,'eth0','02:00:00:00:01:11','ff:ff:ff:ff:ff:ff',token)
+   counts=finish(caps);return require(all(c==0 for c in counts.values()),counts)
+  record('l2-reflected-'+frame_type+'-source-drop',reflected_control)
+ def outbound_rarp():
+  token='KOPR-ACTIVATION-RARP'
+  caps=[capture('node-a','fabric','eth0','rarp',token,'outbound-rarp')]
+  ex('node-a','ip','netns','exec','blue','python3','/lab/source/hack/openperouter/packets.py','rarp','eth0','02:00:00:00:01:11','ff:ff:ff:ff:ff:ff',token)
+  counts=finish(caps);return require(counts['outbound-rarp']==1,counts)
+ record('l2-outbound-rarp-permitted',outbound_rarp)
+ for frame_type in ['arp','rarp','nd']:
+  def external_control(frame_type=frame_type):
+   needle='fd00:101:1::200,ff02::1' if frame_type=='nd' else 'KOPR-EXTERNAL-'+frame_type
+   caps=[capture(n,'fabric' if frame_type=='arp' else 'blue','eth0','arp-reply' if frame_type=='arp' else frame_type,'10.101.1.12,10.101.1.200' if frame_type=='arp' else needle,'external-'+frame_type+'-'+n) for n in ['node-a','node-b']]
+   args=['02:aa:00:00:00:01','33:33:00:00:00:01','fd00:101:1::200','ff02::1'] if frame_type=='nd' else ['02:aa:00:00:00:01','ff:ff:ff:ff:ff:ff',needle]
+   ex('node-b','ip','netns','exec','fabric','python3','/lab/source/hack/openperouter/packets.py',frame_type,'eth0',*args)
+   counts=finish(caps);return require(counts['external-'+frame_type+'-node-a']==0 and counts['external-'+frame_type+'-node-b']==1,counts)
+  record('l2-legitimate-external-'+frame_type,external_control)
+
+
 
  def external_bum():
   token='KUBEOVN-OPR-EXTERNAL-1'
@@ -178,6 +203,13 @@ try:
   ex('node-b','ip','netns','exec','fabric','python3','/lab/source/hack/openperouter/packets.py','custom','eth0','02:aa:00:00:00:01','ff:ff:ff:ff:ff:ff',token)
   counts=finish(caps);return require(counts['external-bum-node-a']==0 and counts['external-bum-node-b']==1,counts)
  record('l2-external-bum-local-only',external_bum)
+ def reflection_counter():
+  data=json.loads(ex('node-b','nft','-j','list','ruleset'))
+  (results/'reflection-nft-node-b.json').write_text(json.dumps(data,indent=2))
+  packets=sum(expr['counter']['packets'] for item in data['nftables'] if 'rule' in item and item['rule'].get('table','').startswith('kopr_') for expr in item['rule'].get('expr',[]) if 'counter' in expr)
+  return require(packets>=4,{'actual-ingress-drops':packets})
+ record('l2-reflection-kernel-drop-counters',reflection_counter)
+
  def mtu():
   output=ex('node-a','ip','netns','exec','pods','ping','-n','-M','do','-s','1372','-c','2','-W','2','10.101.3.12')
   return require('0% packet loss' in output,output)
@@ -204,6 +236,38 @@ try:
   wait(lambda: ex('node-a','ovs-appctl','-t','/tmp/ovn.ctl','connection-status')=='connected')
   return east_west()
  record('ovn-controller-restart-internal-connectivity',restarted)
+ def migration_activation():
+  endpoint='tcp:172.30.246.10:6642'
+  def active(node):
+   return json.loads(ex(node,'/lab/dataplane-helper','active',endpoint,node,'blue-a'))
+  nb('set','Logical_Switch_Port','blue-a','options:requested-chassis=node-a,node-b','options:activation-strategy=rarp')
+  sh('node-b','ip netns add target; ip link add vm-target type veth peer name eth0 netns target; ip link set vm-target up; ip -n target link set lo up; ip -n target link set eth0 address 02:00:00:00:01:11 up; ovs-vsctl add-port br-int vm-target -- set Interface vm-target external_ids:iface-id=blue-a')
+  wait(lambda: sb('get','Port_Binding','blue-a','additional_chassis') != '[]')
+  require(active('node-a') and not active('node-b'),'prepared target must not advertise')
+  ex('node-b','ip','netns','exec','target','python3','/lab/source/hack/openperouter/packets.py','rarp','eth0','02:00:00:00:01:11','ff:ff:ff:ff:ff:ff','KOPR-MIGRATE')
+  wait(lambda: active('node-b') and not active('node-a'))
+  snapshot={'primary':sb('get','Port_Binding','blue-a','chassis'),'additional':sb('get','Port_Binding','blue-a','additional_chassis'),'options':sb('get','Port_Binding','blue-a','options')}
+  (results/'migration-after-rarp.json').write_text(json.dumps(snapshot,indent=2))
+  # Cancellation restores source ownership before deleting the prepared leg.
+  nb('set','Logical_Switch_Port','blue-a','options:requested-chassis=node-a')
+  nb('remove','Logical_Switch_Port','blue-a','options','activation-strategy')
+  wait(lambda: active('node-a') and not active('node-b'))
+  sh('node-b','ovs-vsctl del-port br-int vm-target; ip link del vm-target; ip netns del target')
+  # Repeat, complete the move, then remove the old source VIF.
+  nb('set','Logical_Switch_Port','blue-a','options:requested-chassis=node-a,node-b','options:activation-strategy=rarp')
+  sh('node-b','ip netns add target; ip link add vm-target type veth peer name eth0 netns target; ip link set vm-target up; ip -n target link set eth0 address 02:00:00:00:01:11 up; ovs-vsctl add-port br-int vm-target -- set Interface vm-target external_ids:iface-id=blue-a')
+  wait(lambda: sb('get','Port_Binding','blue-a','additional_chassis') != '[]')
+  require(active('node-a') and not active('node-b'),'second target is still prepared')
+  ex('node-b','ip','netns','exec','target','python3','/lab/source/hack/openperouter/packets.py','rarp','eth0','02:00:00:00:01:11','ff:ff:ff:ff:ff:ff','KOPR-MIGRATE-2')
+  wait(lambda: active('node-b') and not active('node-a'))
+  nb('set','Logical_Switch_Port','blue-a','options:requested-chassis=node-b')
+  nb('remove','Logical_Switch_Port','blue-a','options','activation-strategy')
+  wait(lambda: active('node-b') and not active('node-a') and sb('get','Port_Binding','blue-a','additional_chassis')=='[]')
+  sh('node-a','ovs-vsctl del-port br-int vblue; ip link del vblue')
+  require(active('node-b'),'late source VIF deletion must preserve target ownership')
+  return snapshot
+ record('migration-rarp-cancel-success-source-cleanup',migration_activation)
+
 except Exception as error:
  checks.append({'name':'fixture','status':'FAIL','error':str(error),'trace':traceback.format_exc()});(results/'ovn-dataplane-checks.json').write_text(json.dumps(checks,indent=2));print(traceback.format_exc(),flush=True)
 finally:

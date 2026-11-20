@@ -85,7 +85,9 @@ MAC в kernel, общий RMAC для нескольких L3VNI, drift/recreati
 описанном в [отчёте](validation-results.md).
 
 Kube-OVN API/CRD, generated configurations, Helm и runtime реализованы.
-Двухнодовый OVN component lab: **16/17**, IPv6 ND reflection провален.
+Предыдущий OVN component lab 2026-11-16 выявил ND reflection через reserved
+allow. Текущая доработка ставит nft netdev ingress filter до OVN ACL;
+новые packet/kernel результаты — в validation-results.md.
 Реальная host-VRF GoBGP↔FRR 10.6.0 session проходит анонс, отзыв и restart.
 MAC-настройки не закрывают ND split-horizon, native fail-closed lifecycle и
 Type-2 cleanup. Актуальные результаты и границы проверок — в

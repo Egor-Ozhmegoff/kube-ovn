@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 
 	kubeovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
 	"github.com/kubeovn/kube-ovn/pkg/openperouter"
+	"github.com/kubeovn/kube-ovn/pkg/openperouter/barrier"
 	opnb "github.com/kubeovn/kube-ovn/pkg/openperouter/northbound"
 	"github.com/kubeovn/kube-ovn/pkg/util"
 )
@@ -86,7 +88,13 @@ func (c *Controller) prepareOpenPERouterL2(subnet *kubeovnv1.Subnet, preparingMA
 	}
 	c.openPERouterL2KeyMutex.LockKey(subnet.Name)
 	defer func() { _ = c.openPERouterL2KeyMutex.UnlockKey(subnet.Name) }()
-	return opnb.EnsureL2(context.Background(), c.OVNNbTables, vpc, subnet, &c.openPERouterMACGuard, preparingMACs...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := opnb.EnsureL2(ctx, c.OVNNbTables, vpc, subnet, &c.openPERouterMACGuard, preparingMACs...); err != nil {
+		return err
+	}
+	store := barrier.Store{Maps: c.config.KubeClient.CoreV1().ConfigMaps(c.config.PodNamespace), SubnetName: subnet.Name, SubnetUID: subnet.UID}
+	return opnb.AdmitMACs(ctx, c.OVNNbTables, subnet, store, preparingMACs...)
 }
 
 // Node attachment changes do not require an external-route copy in OVN or a

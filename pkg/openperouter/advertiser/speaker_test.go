@@ -35,3 +35,12 @@ func TestHostPathsDoNotAdvertiseCachedAggregatesOrDefault(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestSpeakerWithoutPeersIsNotReady(t *testing.T) {
+	speaker, err := New(t.Context(), "", 64515, 64514, "192.0.2.11", nil)
+	require.NoError(t, err)
+	defer speaker.Close()
+	ready, err := speaker.Ready(t.Context())
+	require.NoError(t, err)
+	require.False(t, ready)
+}

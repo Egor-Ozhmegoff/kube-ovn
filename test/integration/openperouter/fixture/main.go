@@ -15,11 +15,12 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/model"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
 	"github.com/kubeovn/kube-ovn/pkg/openperouter"
+	"github.com/kubeovn/kube-ovn/pkg/openperouter/host"
 	nb "github.com/kubeovn/kube-ovn/pkg/openperouter/northbound"
+	"github.com/kubeovn/kube-ovn/pkg/ovs"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/ovnnb"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 )
@@ -30,9 +31,50 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func run() error {
+	if len(os.Args) == 7 && (os.Args[1] == "reflection-sb" || os.Args[1] == "l2-host-sb") {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		name := openperouter.ReflectionAddressSet(os.Args[4], os.Args[5])
+		reader, err := ovs.NewLocalBindingClient(ctx, os.Args[2], os.Args[3], name)
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		macs, err := reader.ReflectionMACs(ctx, name)
+		if err != nil {
+			return err
+		}
+		if os.Args[1] == "l2-host-sb" {
+			return prepareL2Host(ctx, macs)
+		}
+		if err := host.EnsureIsolation(os.Args[6], 110001); err != nil {
+			return err
+		}
+		return host.EnsureReflection(ctx, os.Args[4], os.Args[6], macs)
+	}
+	if len(os.Args) == 5 && os.Args[1] == "active" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		reader, err := ovs.NewLocalBindingClient(ctx, os.Args[2], os.Args[3])
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		ports, err := reader.BoundPorts(ctx)
+		if err != nil {
+			return err
+		}
+		_, active := ports[os.Args[4]]
+		return json.NewEncoder(os.Stdout).Encode(active)
+	}
+	if len(os.Args) >= 4 && os.Args[1] == "reflection" {
+		return host.EnsureReflection(context.Background(), os.Args[2], os.Args[3], os.Args[4:])
+	}
+
 	spec := &v1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001, TransitCIDRs: []string{"169.254.32.0/20", "fd00:32::/64"}, HostSessionCIDRs: []string{"169.254.16.0/20", "fd00:16::/64"}, RouterASN: 64514, HostASN: 64515}
-	vpc := &v1.Vpc{ObjectMeta: metav1.ObjectMeta{Name: "tenant-a", UID: "disposable-vpc-a"}, Spec: v1.VpcSpec{OpenPERouter: spec}}
+	vpc := &v1.Vpc{Name: "tenant-a", UID: "disposable-vpc-a", Spec: v1.VpcSpec{OpenPERouter: spec}}
 	transit, err := openperouter.BuildTransit(vpc.Name, spec)
 	if err != nil {
 		return err
@@ -124,13 +166,13 @@ func run() error {
 	}
 	var nodes []*corev1.Node
 	for i, name := range []string{"node-a", "node-b"} {
-		nodes = append(nodes, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: map[string]string{openperouter.NodeIndexAnnotation: fmt.Sprint(11 + i), openperouter.NodeRouterMACAnnotation: fmt.Sprintf("02:00:00:01:00:%02x", 11+i)}}})
+		nodes = append(nodes, &corev1.Node{Name: name, Annotations: map[string]string{openperouter.NodeIndexAnnotation: fmt.Sprint(11 + i), openperouter.NodeRouterMACAnnotation: fmt.Sprintf("02:00:00:01:00:%02x", 11+i)}})
 	}
 	defaults, err := nb.EnsureTransit(ctx, db, vpc, nodes, "10.101.3.0/24", "10.101.1.0/24", "fd00:101:3::/64", "fd00:101:1::/64")
 	if err != nil {
 		return err
 	}
-	subnet := &v1.Subnet{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "disposable-blue"}, Spec: v1.SubnetSpec{Vpc: vpc.Name, CIDRBlock: "10.101.1.0/24", Gateway: "10.101.1.1", OpenPERouterL2: &v1.OpenPERouterL2Attachment{L2VNIName: "tenant-a-blue", VNI: 10101, GatewayMAC: "02:00:05:00:03:00"}}}
+	subnet := &v1.Subnet{Name: "blue", UID: "disposable-blue", Spec: v1.SubnetSpec{Vpc: vpc.Name, CIDRBlock: "10.101.1.0/24", Gateway: "10.101.1.1", OpenPERouterL2: &v1.OpenPERouterL2Attachment{L2VNIName: "tenant-a-blue", VNI: 10101, GatewayMAC: "02:00:05:00:03:00"}}}
 	if err = nb.EnsureL2(ctx, db, vpc, subnet, &openperouter.MACGuard{}); err != nil {
 		return err
 	}
@@ -149,4 +191,26 @@ func run() error {
 		routeOps = append(routeOps, o...)
 	}
 	return db.Table(current).Transact(ctx, "disposable-default", routeOps...)
+}
+
+// Existing-endpoint component fixture: new-MAC admission is exercised separately
+// by TestDelayedFilterAdmissionPackets through the production admission path.
+func prepareL2Host(ctx context.Context, macs []string) error {
+	provider, err := ovs.NewVswitchClient("unix:/var/run/openvswitch/db.sock", 5, 5)
+	if err != nil {
+		return err
+	}
+	defer provider.Close()
+	spec := &v1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001}
+	vpc := &v1.Vpc{Name: "tenant-a", UID: "disposable-vpc-a", Spec: v1.VpcSpec{OpenPERouter: spec}}
+	subnet := &v1.Subnet{Name: "blue", UID: "disposable-blue", Spec: v1.SubnetSpec{Vpc: vpc.Name, CIDRBlock: "10.101.1.0/24", Gateway: "10.101.1.1", OpenPERouterL2: &v1.OpenPERouterL2Attachment{L2VNIName: "tenant-a-blue", VNI: 10101, GatewayMAC: "02:00:05:00:03:00"}}}
+	native := openperouter.NativeL2VNI{Name: "tenant-a-blue", VNI: 10101, GatewayMAC: "02:00:05:00:03:00", GatewayIPs: []string{"10.101.1.1/24"}}
+	native.RoutingDomain.Type = "L3VNI"
+	native.RoutingDomain.L3VNI.Name = "tenant-a"
+	bootstrap := &openperouter.Bootstrap{L2VNIs: []openperouter.NativeL2VNI{native}}
+	attachment, err := host.EnsureL2(ctx, provider, vpc, subnet, bootstrap, 1400, macs)
+	if err != nil {
+		return err
+	}
+	return attachment.Open()
 }

@@ -301,3 +301,12 @@ See [the integration design and release blockers](../../docs/openperouter/implem
 and [disposable lab examples](../../docs/openperouter/examples/README.md).
 The selected OpenPERouter commit and remaining dataplane limitations must be
 reviewed before enabling this experimental mode.
+
+### Direct Kubernetes API endpoint
+
+`networking.API_SERVER_HOST` and `networking.API_SERVER_PORT` optionally
+set `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` in component and
+hook containers, including init containers with environment blocks. Use an
+underlay-reachable API address for bootstrap before Service networking.
+Unset values preserve Kubernetes defaults. `MASTER_NODES` / `masterNodes`
+configure OVN Central and are independent of the Kubernetes API endpoint.

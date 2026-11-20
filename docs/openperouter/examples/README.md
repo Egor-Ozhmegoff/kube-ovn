@@ -103,3 +103,80 @@ flag в старом image не устанавливает новую реали
 transport задаётся `TUNNEL_TYPE=vxlan`; в v2 соответствуют `networkType`
 и `tunnelType`. Проверяется реальный аргумент daemon. VLAN mode и Geneve
 transport для OpenPERouter integration отклоняются.
+
+## Два инфраструктурных адреса и независимый bootstrap
+
+| Назначение | node-a | node-b | Владелец |
+| --- | --- | --- | --- |
+| Node IP, host0, host namespace | 192.0.2.11/24 | 192.0.2.12/24 | ОС / Ansible / systemd-networkd |
+| Внешний VTEP, PE namespace | 198.18.0.11/32 | 198.18.0.12/32 | OpenPERouter |
+| OVN VXLAN source | Node IP | Node IP | Kube-OVN / OVS |
+| PE fabric0, IPv6 link-local | выделенный NIC | выделенный NIC | OpenPERouter |
+
+`routerIDCIDR` и `tunnelEndpoint.cidrs` используют одинаковый IPv4 pool:
+в выбранном API оба адреса вычисляются как pool + nodeIndex. Router ID
+совпадает с внешним VTEP; отдельный третий инфраструктурный IP не нужен.
+Host/PE transit link-local адреса — локальные служебные подключения, не VTEP.
+
+Пример внешней настройки systemd-networkd для node-a (`host0.network`):
+
+```ini
+[Match]
+Name=host0
+[Network]
+Address=192.0.2.11/24
+Gateway=192.0.2.1
+```
+
+Для node-b заменить Address на 192.0.2.12/24. Подсеть Node IP должна быть
+доступна через underlay с остальных нод и API endpoint. Перед запуском PE
+Ansible обязан проверить, что `fabric0` и `host0` — разные устройства, и
+host0 не входит в `underlays.interfaces` PE. NetworkDevice в native API
+перемещает устройство в PE namespace: host0 передавать ему нельзя.
+Если нужны VLAN subinterfaces, их создаёт ОС заранее и разводит владельцев;
+Kube-OVN не создаёт bootstrap ОС.
+
+Порядок: host-underlay/Node IP/routes → network-online → native Podman/systemd
+FRR/PE из локальных образов и файлов → kubelet/control plane/OVN Central →
+OVS/OVN daemon → tenant attachments и workload announcements. Kubelet node-ip
+и OVN tunnel source выбирают Node IP; Helm v1 `networking.IFACE=host0`, v2
+`agent.interface=host0`. Адреса API задаются явно в обоих charts:
+
+```yaml
+networking:
+  API_SERVER_HOST: '192.0.2.10'
+  API_SERVER_PORT: '6443'
+```
+
+Это прямой underlay API endpoint, не MASTER_NODES (OVN Central).
+Без overrides сохраняются стандартные Kubernetes Service env.
+
+MAC-ветка `60a1285` запускает static reconciler до API, а после подключения
+API передаёт тот же `StaticConfigDir` Kubernetes reconciler и вызывает
+`mergeStaticConfig`. Bootstrap-underlay остаётся в локальном файле; его не
+следует удалять после join или дублировать конфликтующим dynamic Underlay.
+Разные peers для нод/групп задаются их локальными underlay specs либо native
+nodeSelector; это не конфигурация Kube-OVN. Static mirrored CR не становятся
+вторым источником конфигурации. Реальный cold boot/handover требует отдельной
+E2E проверки, source review его не заменяет.
+
+Новая нода получает index/router-mac annotations после установки локальных
+файлов и проверки PE. До наличия обеих annotations transit reconciliation
+не включает её return VIF и продолжает обслуживать существующие ноды.
+Daemon дополнительно сверяет annotations с bootstrap, native veth, OVN
+connection и installed bindings; annotations сами не разрешают анонсы.
+
+Для другой группы leaf peers изменяется native underlay в локальном файле
+соответствующей ноды, например в node-b вместо соседнего ASN 64512:
+
+```yaml
+# Fragment of this node's Underlay, not Kube-OVN Helm values.
+neighbors:
+  - asn: 64513
+    interface: fabric0
+    holdTimeSeconds: 9
+    keepaliveTimeSeconds: 3
+```
+
+Node index, hostSession, VNI и RT/RD должны оставаться согласованными с VPC
+и политикой fabric. Remote VTEP IP в OVN routes/policies не добавляются.

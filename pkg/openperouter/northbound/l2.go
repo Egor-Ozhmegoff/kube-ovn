@@ -60,7 +60,7 @@ func EnsureL2(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, 
 	ids := map[string]string{openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID), "subnet": subnet.Name, "subnet-uid": string(subnet.UID)}
 	tx := nbTransaction{ctx: ctx, provider: provider, ids: ids}
 	hash := sha256.Sum256([]byte(string(subnet.UID) + "/" + subnet.Name))
-	as := &ovnnb.AddressSet{Name: fmt.Sprintf("oprm_%x", hash[:12])}
+	as := &ovnnb.AddressSet{Name: openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name)}
 	existing := &ovnnb.AddressSet{Name: as.Name}
 	err := provider.Table(as).Get(ctx, existing)
 	if err != nil && !errors.Is(err, table.ErrNotFound) {
@@ -70,7 +70,9 @@ func EnsureL2(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, 
 		return fmt.Errorf("refuse to adopt MAC reflection address set %s", as.Name)
 	}
 	as.ExternalIDs = maps.Clone(ids)
-	as.Addresses = guard.Update(string(subnet.UID), existing.Addresses, observed, time.Now())
+	as.Addresses = append(slices.Clone(existing.Addresses), guard.Update(string(subnet.UID), existing.Addresses, observed, time.Now())...)
+	slices.Sort(as.Addresses)
+	as.Addresses = slices.Compact(as.Addresses)
 	if errors.Is(err, table.ErrNotFound) {
 		as.UUID = "op_" + strings.ReplaceAll(uuidpkg.NewString(), "-", "")
 		ops, err := provider.Table(as).CreateOps(as)
@@ -80,7 +82,7 @@ func EnsureL2(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, 
 		tx.ops = append(tx.ops, ops...)
 	} else if !sameSet(as.Addresses, existing.Addresses) {
 		as.UUID = existing.UUID
-		ops, err := provider.Table(as).UpdateOps(existing, as, &as.Addresses)
+		ops, err := provider.Table(as).MutateOps(existing, model.Mutation{Field: &existing.Addresses, Mutator: ovsdb.MutateOperationInsert, Value: as.Addresses})
 		if err != nil {
 			return err
 		}

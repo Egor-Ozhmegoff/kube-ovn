@@ -59,6 +59,7 @@ spec:
             - --health-probe-port=8080
             - --v=3
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:

@@ -348,3 +348,15 @@ Otherwise, auto-detect based on the currently deployed DaemonSet.
 {{- define "kubeovn.runAsUser" -}}
   65534
 {{- end -}}
+
+{{/* Direct API access before Service networking is available. */}}
+{{- define "kubeovn.apiServerEnv" -}}
+{{- with .Values.networking.API_SERVER_HOST }}
+- name: KUBERNETES_SERVICE_HOST
+  value: {{ . | quote }}
+{{- end }}
+{{- with .Values.networking.API_SERVER_PORT }}
+- name: KUBERNETES_SERVICE_PORT
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}

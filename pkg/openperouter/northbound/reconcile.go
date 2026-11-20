@@ -68,6 +68,10 @@ func EnsureTransit(ctx context.Context, provider table.Provider, vpc *kubeovnv1.
 	indices := make(map[int]string)
 	routerMACs := make(map[string]string)
 	for _, node := range nodes {
+		// Bootstrap annotations are installed together before this node joins.
+		if node.Annotations[openperouter.NodeIndexAnnotation] == "" || node.Annotations[openperouter.NodeRouterMACAnnotation] == "" {
+			continue
+		}
 		index, err := strconv.Atoi(node.Annotations[openperouter.NodeIndexAnnotation])
 		if err != nil {
 			return nil, fmt.Errorf("node %s requires %s: %w", node.Name, openperouter.NodeIndexAnnotation, err)

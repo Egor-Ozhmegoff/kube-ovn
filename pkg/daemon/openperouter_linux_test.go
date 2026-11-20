@@ -35,7 +35,9 @@ func TestOpenPERouterOnlyAdvertisesFreshInstalledWorkloads(t *testing.T) {
 	bound[binding.LogicalPort] = binding
 	unavailable := *pod.DeepCopy()
 	unavailable.Status.Conditions = nil
-	require.Empty(t, collect(unavailable))
+	require.Contains(t, collect(unavailable), netip.MustParsePrefix("10.101.3.11/32"), "application readiness must not gate network reachability")
+	unavailable.Status.Phase = corev1.PodPending
+	require.Contains(t, collect(unavailable), netip.MustParsePrefix("10.101.3.11/32"), "installed networking is independent of container startup")
 	unavailable = *pod.DeepCopy()
 	now := metav1.Now()
 	unavailable.DeletionTimestamp = &now

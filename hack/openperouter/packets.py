@@ -23,6 +23,12 @@ sock=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));sock.bind((
 if command=='custom':
  source,destination,token=sys.argv[3:6]
  sock.send(mac(destination)+mac(source)+b'\x88\xb5'+token.encode().ljust(46,b'.'))
+elif command in ('arp','rarp'):
+ source,destination,token=sys.argv[3:6]
+ ether=b'\x08\x06' if command=='arp' else b'\x80\x35'
+ opcode=1 if command=='arp' else 3
+ body=struct.pack('!HHBBH',1,0x0800,6,4,opcode)+mac(source)+socket.inet_aton('10.101.1.200' if source.startswith('02:aa:') else '10.101.1.11')+mac(destination)+socket.inet_aton('10.101.1.12')+token.encode()
+ sock.send(mac(destination)+mac(source)+ether+body)
 elif command=='icmp':
  source_mac,dest_mac,source_ip,dest_ip=sys.argv[3:7]
  body=struct.pack('!BBHHH',8,0,0,1234,1)+b'KUBEOVN-OPR-RETURN'
@@ -49,6 +55,8 @@ elif command=='capture':
   except socket.timeout:continue
   matched=False
   if mode=='custom':matched=frame[12:14]==b'\x88\xb5' and needle.encode() in frame[14:]
+  elif mode=='arp-reply':matched=len(frame)>=42 and frame[12:14]==b'\x08\x06' and frame[20:22]==b'\x00\x02' and frame[28:32]==socket.inet_aton(needle.split(',')[0]) and frame[38:42]==socket.inet_aton(needle.split(',')[1])
+  elif mode in ('arp','rarp'):matched=frame[12:14]==(b'\x08\x06' if mode=='arp' else b'\x80\x35') and needle.encode() in frame[14:]
   elif mode=='icmp':matched=is_icmp(frame,*needle.split(','))
   elif mode=='icmp6':matched=is_icmp6(frame,*needle.split(','))
   elif mode=='nd':matched=is_icmp6(frame,*needle.split(','),kind=136)

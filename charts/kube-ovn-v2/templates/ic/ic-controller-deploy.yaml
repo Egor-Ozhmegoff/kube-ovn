@@ -82,6 +82,7 @@ spec:
                 - NET_BIND_SERVICE
                 - SYS_NICE
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: ENABLE_SSL
               value: "{{ .Values.networking.enableSsl }}"
             - name: POD_NAMESPACE

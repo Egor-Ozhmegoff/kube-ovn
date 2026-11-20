@@ -114,6 +114,7 @@ spec:
           image: "{{ $hookImage.prefix }}{{ $hookImage.repository }}:{{ $hookImage.tag }}"
           imagePullPolicy: {{ $hookImage.pullPolicy }}
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

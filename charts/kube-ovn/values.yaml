@@ -51,6 +51,9 @@ externalOvnCentral:
   sbPort: 6642
 
 networking:
+  # Direct Kubernetes API endpoint; independent of OVN Central/master nodes.
+  API_SERVER_HOST: ""
+  API_SERVER_PORT: ""
   # NET_STACK could be dual_stack, ipv4, ipv6
   NET_STACK: ipv4
   ENABLE_SSL: false

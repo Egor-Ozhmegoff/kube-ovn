@@ -1,14 +1,12 @@
 # Изолированный план приёмки
 
-Полная E2E приёмка **не завершена**. На Linux исполнены компонентные
-испытания: OVN 16/17 (ND reflection FAIL), native OpenPERouter 70/70,
-реальная GoBGP↔FRR session. Границы и оставшиеся пункты — в
-[отчёте](validation-results.md). Ниже полная последовательность для
-экспериментального runtime. Read-only probe runner
-`hack/test-openperouter-lab.sh` проверяет часть пунктов 1/5/6/13 после подготовки
-отдельного стенда; остальные пункты требуют указанных ниже captures/операций.
-В выбранной ветке `Mac_setings_for_l2vni_and_l3vni` API-блокеры MAC сняты;
-L3 handoff проверен в OVN component lab; L2 имеет подтверждённый ND blocker.
+Полная E2E приёмка **не завершена**. Актуальные component tests, Linux
+kernel tests и skips — в [отчёте](validation-results.md). Ниже критерии
+полной приёмки; они не считаются выполненными автоматически.
+
+Внутренний VXLAN сохраняется. ND reflection фильтруется до OVN ACL на
+host-side L2 ingress. PE unreachable defaults остаются отложенной внешней
+зависимостью MAC-ветки и не должны добавляться обходными командами Kube-OVN.
 
 ## Фиксация стенда
 
@@ -93,8 +91,9 @@ overhead и соответствующий packet capture. Учесть VLAN tag
 реализации перенести последовательность в repository e2e с версионным
 `f.SkipVersionPriorTo` и отдельным opt-in для privileged disposable lab.
 
-В текущей поставке нет результатов этих 13 тестов, доказательства ECMP,
-Cisco interoperability, L2 split-horizon, live migration или масштабирования.
+Полная матрица этих 13 E2E сценариев не выполнена. Частичные OVN/kernel
+component результаты и regression-тесты перечислены в validation-results.md.
+Они не доказывают Cisco interoperability/ECMP, полную VM migration или масштаб.
 Offline upstream audit проверяет только закреплённые исходники и блокеры API.
 
 ## Команды воспроизведения частичных smoke probes
@@ -127,3 +126,78 @@ Pod connectivity, ClusterIP HTTP и успех/неуспех external ICMP по
 Требование внешнего ICMP endpoint является частью fixture, не предположением
 об arbitrary external host. Для MTU добавить IPv4 DF probe с `iputils ping -M do`
 и IPv6 PTB test; busybox fixture не заменяет эти проверки.
+
+## Regression трёх замечаний review
+
+Бинарники собираются из текущего дерева на Linux с Go из go.mod:
+
+```sh
+mkdir -p /tmp/opr-review-binaries
+go test -c ./pkg/openperouter/host -o /tmp/opr-review-binaries/host.test
+go test -c ./pkg/openperouter/northbound -o /tmp/opr-review-binaries/northbound.test
+# Собрать lab image из hack/openperouter/Dockerfile либо использовать закреплённый image.
+docker build -t kubeovn-opr-review-lab -f hack/openperouter/Dockerfile .
+hack/openperouter/review-regressions.sh kubeovn-opr-review-lab /tmp/opr-review-binaries
+```
+
+Runner запускает каждый тест в новом privileged **network-none** контейнере,
+без host networking или сетевых namespace живой ноды. Нужны kernel VRF/OVS,
+nft netdev и root внутри контейнера. Не запускать test binary с marker на host.
+
+- `TestCleanupInternalPortsAndRecreateVPC`: настоящие ovsdb-server/vswitchd,
+  созданные internal Port/Interface старого UID, Fence/recovery, injected delete
+  failure, retry Cleanup, новый VPC UID с тем же L3VNI; native veth сохраняется.
+- `TestL2VNIDeleteAndReuseOtherVRF`: production private L2 path A; live conflict
+  отклоняется; partial cleanup/retry, удаление native конфигурации fixture-владельцем,
+  новая привязка B с тем же L2VNI; новая таблица, старых lookup нет, 901 сохранён.
+- `TestRebindKeepsTerminalDropOnPartialFailure`: чужой IPv6 rule вызывает отказ
+  после IPv4 progress; чужое правило не удаляется, 899 остаётся в обоих семействах;
+  после удаления конфликта его владельцем retry восстанавливает новую таблицу.
+- `TestReleaseInstallsMissingTerminal`: старый собственный lookup без 901;
+  release восстанавливает terminal drop обоих семейств, снимает lookup и
+  повторно применяется без ошибки.
+- `TestDelayedFilterAdmissionPackets`: production NB admission и barrier с API
+  test double, настоящий kernel nft/bridge. B намеренно держит прежний set;
+  контрольный IPv6 NA нового MAC проходит старый filter, но создание LSP запрещено.
+  После install+ACK создаётся LSP; Ethernet/ARP/ND/RARP reflection отбрасывается,
+  внешний L2 и исходящий migration RARP проходят. Это component packet test,
+  без полного daemon/Kubernetes/Cisco/KubeVirt orchestration.
+
+`go test ./pkg/openperouter/...` дополнительно проверяет поколения barrier,
+restart session, disconnected member, утрату ConfigMap, монотонность MAC set,
+очистку admitted set и быстрый путь постоянного MAC при migration. Без marker
+kernel tests явно SKIP; это не успешный dataplane run. Двухнодовый
+`hack/openperouter/dataplane.py` использует production private L2 host path
+через fixture `l2-host-sb`; начальные endpoints статичны, admission при добавлении
+нового MAC проверяет отдельный delayed-filter test.
+
+
+## Membership barrier regression
+
+Production `Store.Publish` больше не принимает Nodes; только JoinClosed
+добавляет участника после успешного закрытия под host lock. Проверки:
+
+```sh
+go test ./pkg/openperouter/barrier ./pkg/openperouter/northbound -count=1
+go test ./pkg/daemon -run TestOpenPERouter -count=1
+go test -race ./pkg/openperouter/... -count=1
+```
+
+NB admission tests используют настоящий in-memory NB DB и API test double.
+`TestUnregisteredNodeDoesNotBlockAdmission` создаёт/удаляет Node без daemon,
+включает upgrade sessionless Pending placeholder, проверяет admission на
+здоровом зарегистрированном участнике и пустое начальное членство.
+`TestJoinAndFinalOpenInterleavingsUseAdmission` задерживает подготовку,
+публикует revision после финального разрешения непосредственно перед Open,
+проверяет блокировку новых MAC, новый Node UID и снятие блокировки только
+после Closed старого участника. Постоянный MAC migration проверяется прежним
+`TestAdmissionBeforePortAndConstantMACMigration`.
+
+Barrier tests принудительно вызывают CAS conflicts Publish/Join и stale
+InstallIntent, меняют revision во время install и после ACK, проверяют
+restart/session, failed closure, потерю API/ConfigMap. Daemon regression
+проверяет смену Node UID: неудачный Fence не публикует Closed, успешное
+закрытие старой identity предшествует регистрации новой, обе записи сохраняются.
+Kernel/packet runner выше отдельно проверяет сохранность Cleanup, L2VNI reuse,
+изоляции и reflection. Mixed-version rolling upgrade не поддерживается:
+legacy paths должны быть предварительно закрыты на всех нодах.

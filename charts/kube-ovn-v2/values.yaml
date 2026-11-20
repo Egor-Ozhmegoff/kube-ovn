@@ -48,6 +48,9 @@ masterNodesLabels:
 # @section -- Network parameters of the CNI
 # @default -- "{}"
 networking:
+  # Direct Kubernetes API endpoint; independent of OVN Central/master nodes.
+  API_SERVER_HOST: ""
+  API_SERVER_PORT: ""
   # -- Protocol(s) used by Kube-OVN to allocate IPs to pods and services.
   # Can be either IPv4, IPv6 or Dual.
   # @section -- Network parameters of the CNI

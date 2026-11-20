@@ -112,6 +112,11 @@ func TestTransitOwnershipAndNodeRemoval(t *testing.T) {
 	defaults, err := EnsureTransit(ctx, db, vpc, nodes, "10.101.3.0/24")
 	require.NoError(t, err)
 	require.Equal(t, []openperouter.Route{{Prefix: "0.0.0.0/0", NextHop: "169.254.32.2"}}, defaults)
+	// Joining nodes without bootstrap must not prevent existing topology updates.
+	joining := &corev1.Node{}
+	joining.Name = "joining"
+	_, err = EnsureTransit(ctx, db, vpc, append(nodes, joining), "10.101.3.0/24")
+	require.NoError(t, err)
 	before := waitSwitch(t, db, 4)
 	require.Len(t, before.ACLs, 2)
 	var ports []ovnnb.LogicalSwitchPort

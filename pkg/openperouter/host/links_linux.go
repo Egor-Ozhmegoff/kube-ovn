@@ -31,7 +31,7 @@ type Attachment struct {
 	Peer   netlink.Link
 }
 
-func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, nodeName string, bootstrap *openperouter.Bootstrap, mtu int, workloadCIDRs []string) (*Attachment, error) {
+func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, nodeName string, bootstrap *openperouter.Bootstrap, mtu int, workloadCIDRs []string, peReady bool) (*Attachment, error) {
 	if mtu <= 0 {
 		return nil, errors.New("workload MTU must be initialized before attaching OpenPERouter")
 	}
@@ -68,6 +68,9 @@ func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, no
 			return nil, err
 		}
 	}
+	if err := EnsureIsolation(node.HostInterface, vrf.Table); err != nil {
+		return nil, err
+	}
 	if peer.Attrs().MasterIndex != 0 && peer.Attrs().MasterIndex != vrf.Index {
 		return nil, fmt.Errorf("native host interface %s is attached to another master", node.HostInterface)
 	}
@@ -81,7 +84,7 @@ func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, no
 		return nil, err
 	}
 	mtu = min(mtu, peer.Attrs().MTU)
-	ret, err := ensureInternal(ctx, provider, node.ReturnInterface, node.ReturnPort, node.ReturnMAC, node.ReturnAddresses, vpc, vrf, mtu)
+	ret, err := ensureInternal(ctx, provider, node.ReturnInterface, node.ReturnPort, node.ReturnMAC, node.ReturnAddresses, vpc, vrf, mtu, true)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +93,7 @@ func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, no
 		return nil, err
 	}
 	// Egress becomes usable only after the return interface and routes exist.
-	egress, err := ensureInternal(ctx, provider, node.EgressInterface, transit.EgressPort, transit.EgressMAC, transit.EgressAddresses, vpc, vrf, mtu)
+	egress, err := ensureInternal(ctx, provider, node.EgressInterface, transit.EgressPort, transit.EgressMAC, transit.EgressAddresses, vpc, vrf, mtu, peReady)
 	if err != nil {
 		return nil, err
 	}
@@ -133,13 +136,16 @@ func ensureVRF(name string, vni int32, uid string) (*netlink.Vrf, error) {
 	if err := netlink.LinkAdd(vrf); err != nil {
 		return nil, err
 	}
+	if err := netlink.LinkSetAlias(vrf, alias); err != nil {
+		return nil, err
+	}
 	if err := netlink.LinkSetUp(vrf); err != nil {
 		return nil, err
 	}
 	return vrf, nil
 }
 
-func ensureInternal(ctx context.Context, provider table.Provider, name, logicalPort, mac string, addresses []string, vpc *kubeovnv1.Vpc, vrf *netlink.Vrf, mtu int) (netlink.Link, error) {
+func ensureInternal(ctx context.Context, provider table.Provider, name, logicalPort, mac string, addresses []string, vpc *kubeovnv1.Vpc, vrf *netlink.Vrf, mtu int, open bool) (netlink.Link, error) {
 	iface := &vswitch.Interface{Name: name}
 	err := provider.Table(iface).Get(ctx, iface)
 	if err != nil && !errors.Is(err, table.ErrNotFound) {
@@ -156,6 +162,9 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 	if portErr == nil && port.ExternalIDs[openperouter.OwnerKey+"-uid"] != string(vpc.UID) {
 		return nil, fmt.Errorf("refuse to adopt OVS port %s", name)
 	}
+	if err := EnsureIsolation(name, vrf.Table); err != nil {
+		return nil, err
+	}
 	ids := map[string]string{openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}
 	desired := &vswitch.Interface{Name: name, Type: "internal", ExternalIDs: map[string]string{"iface-id": logicalPort, openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}}
 	desired.MTURequest = &mtu
@@ -168,6 +177,11 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 	link, err := netlink.LinkByName(name)
 	if err != nil {
 		return nil, err
+	}
+	if !open {
+		if err := netlink.LinkSetDown(link); err != nil {
+			return nil, err
+		}
 	}
 	if link.Attrs().MasterIndex != 0 && link.Attrs().MasterIndex != vrf.Index {
 		return nil, fmt.Errorf("interface %s is attached to another master", name)
@@ -200,6 +214,12 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 				return nil, err
 			}
 		}
+	}
+	if !open {
+		if err := netlink.LinkSetDown(link); err != nil {
+			return nil, err
+		}
+		return link, nil
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
 		return nil, err

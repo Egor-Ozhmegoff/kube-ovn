@@ -82,6 +82,7 @@ spec:
             {{- toYaml . | trim | nindent 12 }}
           {{- end }}
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: NODE_NAME
               valueFrom:
                 fieldRef:

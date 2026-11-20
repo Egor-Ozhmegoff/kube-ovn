@@ -62,13 +62,17 @@ strong reference, orphan cleanup сохраняет основной VPC router.
 
 Host-side speaker GoBGP запускает kube-ovn daemon отдельно для каждого host
 VRF, bind-to-device, active-only TCP, без listener и Graceful Restart. На host
-нет второго FRR. Источник BGP NLRI — свежий API list локальных running/ready
-Pods, Kube-OVN allocation annotations, установленный OVS iface и primary
-OVN SB binding. Только /32 и /128. Подготовленный migration target не является
-primary owner и не должен анонсировать маршрут. VMI-owner port naming учтён.
+нет второго FRR. Источник BGP NLRI — свежий API list локальных Pending/Running
+Pods, Kube-OVN allocation annotations, установленный OVS iface и активное
+OVN SB владение. PodReady не определяет доступность маршрута. Только /32 и
+/128. Подготовленный target не анонсирует; после RARP учитывается
+`additional-chassis-activated`, даже пока primary остаётся source. VMI-owner
+port naming учтён.
 
-SB monitor условный: один Chassis и только Port_Binding с primary chassis
-этой ноды. Additional/migration chassis не используется как primary.
+SB monitor условный: один Chassis и Port_Binding, где нода — primary либо
+additional chassis (OR). Из additional выбирается только RARP-активированный
+владелец. Дополнительно отслеживаются точные имена MAC Address_Set нужных
+L2 subnet, без копирования всех внешних маршрутов.
 Внешние маршруты host speaker не импортирует и в host FIB не устанавливает.
 Native hostSession имеет отдельные ASNs PE/host (пример 64514/64515).
 EVPN/unnumbered Cisco peering, RT/RD, VTEP IPAM полностью остаются native
@@ -88,22 +92,107 @@ peer, при штатном обнаружении выполняется явн
 
 ## Внешний L2
 
-На Subnet создаётся один общий localport с `addresses: unknown`; на каждой
-ноде к нему привязан native `host-e-L2VNI` как OVS system interface.
-`hostMaster` в OpenPERouter должен отсутствовать: native Linux bridge или
-OVS bridge на host leg создал бы второго владельца подключения.
-OVN workload MAC заранее добавляется в reflection Address_Set до создания
-LSP. Высокоприоритетный ingress ACL на localport отбрасывает fabric copies
-с source MAC любого OVN workload этого сегмента. Tombstones удерживаются
-10 минут после исчезновения; после рестарта controller набор seed берётся
-из OVN. Это cache split-horizon, он никогда не анонсирует workload BGP routes.
-Unknown source MAC workload запрещён в L2 режиме.
-**Ограничение:** этот ACL не фильтрует отражённые IPv6 ND/RA/MLD; reserved
-allow OVN имеет больший приоритет. L2 split-horizon пока не завершён.
+На Subnet создаётся один общий `localport` с `addresses: unknown`.
+На каждой ноде host-side путь теперь следующий (имена кодируют VNI в hex):
+
+```text
+PE namespace → native host-e-L2VNI → owned bridge oplb<VNI>
+  → owned veth oplp<VNI> ↔ oplf<VNI> [nft ingress] → br-int/localport
+```
+
+`hostMaster` в OpenPERouter должен отсутствовать: host bridge и частная
+veth pair принадлежат Kube-OVN, native veth создаёт только OpenPERouter.
+Alias bridge/pair содержит VPC UID и Subnet UID. Kube-OVN не меняет
+FDB/neighbors внутри PE. Старое прямое подключение native veth к OVS
+закрывается и удаляется только при совпадении владельца.
+
+Пользовательский OVN ACL остаётся дополнительной защитой; reserved ND allow
+может его обходить. Основная защита — nftables `netdev` ingress
+`ether saddr @macs drop` на **частном** `oplf`, для всех EtherTypes.
+Исходящий migration RARP не фильтруется. Native veth recreation не удаляет
+этот hook и не может открыть частную veth; после host reboot её вообще нет
+до подготовки daemon. Замена nft table/set/chain атомарна. Имена таблиц
+и ownership comment привязаны к Subnet UID.
+
+До `createLogicalSwitchPort` controller выполняет протокол допуска:
+
+1. MAC добавляется в NB Address_Set. Набор **монотонный до удаления Subnet**:
+   удаление Pod не удаляет защиту MAC. Внешний endpoint с ранее использованным
+   OVN MAC останется отфильтрованным до удаления этой сети; перенос такого MAC
+   из OVN во внешний L2 не поддерживается этим admission-протоколом.
+   Это конфигурация фильтра, не доступность
+   workload и не основание BGP-анонса.
+2. В namespaced ConfigMap `kube-ovn-opr-guard-<hash Subnet UID>` публикуются
+   SHA256 ревизия полного набора. `Publish` не читает Nodes и не создаёт
+   участников: членство появляется только через daemon `JoinClosed` после
+   закрытия локального пути под host flock. При пустом списке участников
+   admission проходит: ещё ни один путь не получил разрешения открыться.
+   Ранее зарегистрированные участники сохраняются даже после удаления Node.
+   Старые Pending placeholders с пустой Session, созданные прежним Publish,
+   удаляются при следующей публикации; они никогда не разрешали открытие.
+   Pending с непустой Session не удаляется.
+3. Каждый daemon сначала закрывает локальную частную veth и регистрирует
+   новую UUID сессию как `closed`. Перед открытием делает CAS `pending`,
+   устанавливает актуальный scoped SB MAC set, делает CAS `active` с точной
+   ревизией, повторно читает API для проверки UID/session/revision/Active
+   и только затем поднимает частную veth. Ошибка подготовки, ACK или финального
+   чтения не разрешает Open; смена revision требует повторной подготовки.
+   На стабильной Active revision новых Pending/ACK записей нет.
+   `closed` подтверждает
+   физически закрытый край; `pending` никогда не разрешает новый MAC.
+4. Controller требует от **всех** участников `closed` либо `active` с текущей
+   ревизией, записывает допущенные MAC в отдельный NB Address_Set `_ready`
+   и только после успеха разрешает создание workload LSP. Ошибка возвращается
+   штатному retry pod handler; фиксированных задержек нет.
+
+Interleavings допуска и открытия:
+
+| Порядок событий | Почему безопасно |
+| --- | --- |
+| Ready прочитал пустое членство/Closed, затем daemon вступил | Путь закрыт. InstallIntent проверяет текущую revision через CAS; фильтр полного набора установлен до Open. |
+| InstallIntent закоммитился раньше Ready | Pending блокирует новый MAC до ACK. CAS conflict заставляет перечитать revision/session, stale intent не коммитится. |
+| Publish изменил revision во время install или перед ACK | ACK старой revision отклоняется; Open не вызывается. |
+| Publish/session change между ACK и финальной проверкой | Свежий API read отклоняет Open. |
+| Publish после финальной проверки, непосредственно перед LinkSetUp | Это не атомарная API/kernel транзакция. Сохраняется фильтр прежней revision; Active ACK этой revision блокирует admission новых MAC следующей revision. До их допуска daemon обязан установить новый полный набор. |
+| Новый процесс после restart | Host flock не допускает overlap; сохранённый путь закрывается до JoinClosed новой session. Старые ACK/Open authorization отвергаются. |
+
+ResourceVersion CAS, UID ConfigMap/Node/Subnet и UUID сессии исключают старые
+ACK. UID barrier закреплён также в NB: потеря/пересоздание ConfigMap блокирует
+новые admissions, а не забывает отключённый открытый край. Восстановление
+после ручного удаления barrier требует подтверждённого закрытия всех прежних
+attachments и пересоздания Subnet; удалять barrier при работающей сети нельзя.
+
+Host flock в общем `/var/run/openvswitch` исключает перекрытие старого и нового
+процессов daemon. Startup закрывает сохранённые attachments до чтения cache;
+Node без daemon вообще не является участником и не блокирует admission.
+После старта daemon новая нода регистрирует `closed` до проверки PE bootstrap.
+При смене Node UID в работающем daemon сначала Fence и Closed старой identity,
+затем регистрация новой. Старый member не стирается; если закрытие или API update
+не удались, новая identity не получает доступ. При restart на другом host старый
+member сохраняется и требует отдельного доказанного закрытия. Она не откроет край
+без актуального набора. Потеря API/SB вызывает Fence; `closed` публикуется
+только после успешного закрытия. Если связь потеряна, старый `active` ACK новой
+ревизии не подходит. Безопасного timeout eviction нет: отключённая нода с
+потенциально открытым краем блокирует **новые MAC** до возврата или доказанного
+закрытия. Для обновления существующей установки сначала закрыть legacy direct
+attachments на всех нодах и обновить daemons; смешанная версия не допускается.
+
+Уже допущенный постоянный MAC VM использует `_ready`: target migration
+не ждёт новых MAC чужих workloads. Он по-прежнему не получает Type-5 только
+из-за наличия target launcher/PodReady. После restart daemon, пересоздания
+native veth или attachment актуальная защита устанавливается до открытия.
+Unknown source MAC workload запрещён в L2 режиме. Полный Cisco/KubeVirt E2E
+и измерения convergence этим протоколом не подменяются.
+
+Оба Helm charts выдают `kube-ovn-cni` namespaced Role get/create/update
+ConfigMaps только при `openperouter.enabled`. В standalone deployment нужны
+те же права в namespace Kube-OVN; controller должен сохранять свои штатные
+права get/create/update ConfigMaps. Bootstrap OpenPERouter от этих ConfigMaps
+не зависит: это admission host attachments после запуска Kubernetes.
 
 Внутренний BUM доставляет OVN; локальный originating copy выходит через PE.
 Fabric ingress предназначен только локальным workloads. При миграции OVN
-primary binding переключает Type-5 ownership, а native EVPN MAC mobility
+RARP activation / active binding переключает Type-5 ownership, а native EVPN MAC mobility
 должен переключить Type-2 по кадрам нового владельца/GARP/NA.
 Публикация/aging Type-2 принадлежит Linux bridge/neighbour/FRR OpenPERouter.
 Kube-OVN не выполняет `bridge fdb`, `ip neigh` или `vtysh` для изменения native
@@ -172,7 +261,7 @@ fabric MTU − native EVPN overhead). Native host-veth MTU также прове
 
 ## Блокеры и неподтверждённые свойства
 
-1. **Гарантия fail-closed при restart PE пока заблокирована.** В выбранном
+1. **PE unreachable defaults — отложенная зависимость OpenPERouter.** В выбранном
    SHA `internal/hostnetwork/vrf.go:setupVRF/createVRF` создаёт и поднимает VRF
    без kernel terminal default. `internal/hostnetwork/vni.go:SetupL3VNI`
    затем создаёт host veth. `api/v1alpha1/l3vni_types.go:L3VNISpec` не содержит
@@ -199,7 +288,9 @@ fabric MTU − native EVPN overhead). Native host-veth MTU также прове
    поэтому не снимает блокер. Для нашей VXLAN EVPN архитектуры можно
    опереться на подход #242, ограничив его EVPN VRF и проверив порядок
    открытия ingress и восстановление; SRv6 в целевой datapath не входит.
-   Минимальное изменение native owner: декларативный failClosed mode и
+   В рамках Kube-OVN это не исправляется и не останавливает независимые
+   работы. Ветка unreachable-route не является контрактом интеграции.
+   Для будущей доработки native owner нужны
    идемпотентная установка terminal IPv4/IPv6 defaults в `setupVRF` до
    поднятия/подключения tenant ingress, включая recreate; не снимать их
    при потере BGP/FRR. Нужны kernel fault/restart tests. Kube-OVN не должен
@@ -209,16 +300,10 @@ fabric MTU − native EVPN overhead). Native host-veth MTU также прове
    Нужна проверка native aging и EVPN mobility. Если требуется немедленный
    withdraw с конкретным сроком, минимальное upstream расширение — endpoint
    availability/lease API у native владельца FDB/FRR, без второго reconciler.
-3. **IPv6 ND reflection обходит ACL на OVN 26.03.0.** Реальный NA от известного
-   workload MAC, инжектированный с fabric leg, доставлен remote workload.
-   `northd/northd.c:build_acls`, reviewed branch-26.03 commit
-   `d84ae4079af6124793a6d7538f544b5e63f5f71a`: `IPV6_CT_OMIT_MATCH`
-   (`nd || nd_ra || nd_rs || mldv1 || mldv2`) получает priority 65532
-   во всех ACL stages; максимум user ACL с offset — 33767.
-   `apply-after-lb=true` также проверен и не помогает. Нужен принадлежащий
-   интеграции Ethernet ingress filter перед OVN ACL на L2 attachment либо
-   upstream OVN API. Второго владельца native FDB/FRR создавать нельзя.
-   Исправление не реализовано, тест оставлен красным.
+3. **Масштаб распределённого L2 admission не измерен.** Барьер закрывает
+   допуск нового MAC до защиты всех потенциально открытых краёв. Потеря
+   участника сознательно ограничивает допуск новых identities. Полная
+   KubeVirt/EVPN mobility и Type-2 lifecycle пока не испытаны.
 4. **Полная E2E матрица не выполнена.** Компонентный OVN lab подтвердил
    local handoff, BUM и LB/ACL, но не Cisco ECMP/AS_PATH, полный PE withdraw,
    conntrack isolation, Kubernetes controllers или KubeVirt migration.
@@ -241,7 +326,9 @@ N — ноды, R — VRF/VPC, L — внешние L2 Subnet, W — endpoints.
 | Transit switches | R | 1 | 1 |
 | Transit LSP (router/localport/return) | 2R+NR | 252 | 1002 |
 | L2 localport | L | 2 | 2 |
-| Новые ACL / MAC Address_Set | 2R+L / L | 4 / 2 | 4 / 2 |
+| Новые ACL / MAC Address_Set | 2R+L / 2L | 4 / 4 | 4 / 4 |
+| Host private bridge/veth devices | 3NL | 1500 | 6000 |
+| Barrier ConfigMaps / member records | L / NL | 2 / 500 | 2 / 2000 |
 | Return Port_Group / membership | R / NR | 1 / 250 | 1 / 1000 |
 | Egress defaults | R на IP family | 1 | 1 |
 | Per-node egress policies | 0 | 0 | 0 |
@@ -251,16 +338,23 @@ N — ноды, R — VRF/VPC, L — внешние L2 Subnet, W — endpoints.
 | Native bridge+VXLAN devices в PE | 2N(R+L) | 1500 | 6000 |
 | Native PE VRF | NR | 250 | 1000 |
 | Host BGP sessions / family | NR | 250 | 1000 |
+| Host ingress policy rules (active) | 4N(3R+3L) | 9000 | 36000 |
+| Host nft table/set/chain, каждого | NL | 500 | 2000 |
 
 Это additions к существующим workload LS/LSP/LRP. Возвратные порты создают
-SB bindings O(NR); multicast/OVN flows должны быть измерены. MAC guard хранит
-O(W_L2 + churn за 10min), без availability announcements из этого кэша.
-Сейчас при изменении guard переписывается целое Addresses множество,
-а Pod prepare читает ports всего L2 switch: O(W_L2) payload/cache work на
-изменение endpoint. Для 50k MAC в одном L2 это примерно 1 MB только строк MAC
-с JSON overhead на обновление, без репликации. При churn это существенный
-предел текущего прототипа; нужны измерения и batching/delta mutations до
-заявления о соответствии масштабу 1000 нод.
+SB bindings O(NR); multicast/OVN flows должны быть измерены. Два MAC набора
+хранят O(уникальных MAC за жизнь Subnet); старые identities освобождаются
+при удалении сети. Это стоимость монотонного доказательства admission,
+без availability announcements из кэша. NB additions используют set insert;
+Pod prepare всё ещё читает весь L2 switch: O(W_L2) cache work. Полный SB set
+и nft transaction передаются целиком: для 50k MAC это около 1 MB строк с
+JSON overhead, без репликации. Нужны измерения до заявления о масштабе 1000.
+На ревизию требуется O(M) Pending/ACK CAS, каждый меняет целый ConfigMap
+с O(M) members конкретного сегмента (M — зарегистрированные, включая
+сохранённых отключённых участников);
+при одновременных ACK возникают retries/conflicts. Stable active revision
+не вызывает ACK write. Это существенный предел admission throughput;
+batching и шардирование требуют отдельного анализа, не подтверждены нагрузкой.
 Type-5 host routes O(W), Type-2 O(W_L2), fabric imports зависят от RT и route
 reflectors. Например 100 endpoints/node → 25k/100k host NLRI на один stack,
 в каждом полном fabric VRF RIB возможно O(W). В OVN нет O(N×external routes).
@@ -269,7 +363,13 @@ reflectors. Например 100 endpoints/node → 25k/100k host NLRI на од
 для 250/1000 нод; это заметная стоимость API и причина отдельного нагрузочного
 теста/возможного lease protocol, без ослабления boot freshness. Общие informer
 traffic и response bytes сюда не включены. SB binding monitor хранит только
-local primary bindings, но controller получает обычные cluster informer caches.
+local primary/additional bindings, но controller получает обычные cluster informer caches.
+Дополнительно guard reconcile делает свежий Node.Get и примерно три
+ConfigMap.Get на локальный L2 attachment за 5s (registration, prepare и pre-Open).
+Для L=2 это около 300/1200 CM GET/s и 50/200 Node GET/s при 250/1000 нодах,
+без retries и informer traffic. Nodes.List для admission удалён. Pending/ACK
+меняют целую запись зарегистрированных участников, не список Kubernetes Nodes. Эти затраты требуют
+отдельного нагрузочного теста; они не относятся к bootstrap OpenPERouter.
 Topology scan каждые 10s читает O(NR), stable desired rows не должны писать
 OVN DB. Новая/удалённая нода меняет O(R) return ports; новые workload MAC
 меняют O(L) address set содержимое соответствующего сегмента, не per-IP policy.
@@ -291,3 +391,47 @@ workload withdrawals и O(NR+NL) закрытий локальных attachments
 * [L3VNI API](https://github.com/Egor-Ozhmegoff/openperouter/blob/60a1285935b10eb0b1cf07e4533faefedde3d4d3/api/v1alpha1/l3vni_types.go)
 * [RawFRRConfig API](https://github.com/Egor-Ozhmegoff/openperouter/blob/60a1285935b10eb0b1cf07e4533faefedde3d4d3/api/v1alpha1/rawfrrconfig_types.go#L37)
 * [L2VNI API](https://github.com/Egor-Ozhmegoff/openperouter/blob/60a1285935b10eb0b1cf07e4533faefedde3d4d3/api/v1alpha1/l2vni_types.go)
+
+## Host attachment isolation и teardown
+
+На host-side L3 и L2 ingress Kube-OVN устанавливает policy rules protocol 202
+для каждого из egress/return/native host-veth и обоих IP families:
+priority 900 `iif <attachment> lookup <tenant-table>`, priority 901
+`iif <attachment> unreachable`. Сначала создаётся terminal rule, затем lookup,
+затем открывается attachment. Даже после потери VRF master lookup не доходит
+до main. Rules привязаны к имени и сохраняются при recreation native veth.
+Fence временно закрывает ingress: internal OVS rows остаются для восстановления.
+Cleanup — окончательное удаление: проверяются UID Interface и Port, ingress
+закрывается, terminal drop восстанавливается даже для частично созданного
+старого attachment, собственный lookup снимается, удаляются Port/Interface **включая
+internal**, затем закрываются/отсоединяются native slaves и удаляется owned
+host VRF. Native veth никогда не удаляется. Повтор после частичной ошибки
+завершает удаление и позволяет новый VPC UID с тем же L3VNI.
+
+Для L2 удаляется частный owned bridge/veth path и NFT table. Собственные
+priority 900 lookups удалённой привязки снимаются; priority 901 terminal drop
+сохраняется для повторно поднятого native имени. При последовательном reuse
+L2VNI в другом VRF новый attachment остаётся закрытым. Проверяются отсутствие
+действующей/чужой OVS или Linux привязки и свободный native master. В обоих
+семействах сначала ставится временный priority 899 unreachable, затем
+снимаются старые собственные 900 и добавляются новые 900 lookup новой таблицы.
+После подготовки фильтра и ACK 899 снимается; 901 остаётся постоянно.
+Частичная ошибка сохраняет 899; повторный reconcile завершает переход.
+Чужие RPDB rules отклоняются, не удаляются. Горячий перенос действующего
+Subnet между VRF не поддерживается: сначала удалить subnet/native config,
+дождаться cleanup, затем создать новую привязку.
+
+Terminal rules сохраняются и для исторически использованных имён: их число
+зависит от числа разных VNI за жизнь хоста, а не только активных сетей.
+Активный L2 attachment имеет по 4 rules на native, private guard и bridge
+(IPv4/IPv6 lookup+terminal); переход добавляет временные 899. Guards не
+касаются обычного host underlay и внешних VXLAN packets внутри PE.
+Nft table/set/chain — по одному на attachment, O(MAC сегмента).
+
+Host→PE BGP readiness проверяется через GoBGP ListPeer для всех настроенных
+семейств. Host VRF/return leg могут быть подготовлены до сессии, но egress
+остаётся down, L2 ещё не открывается и workload NLRI не публикуются.
+При потере host session owned attachments закрываются; внутренний OVN
+workload-to-workload путь от этого не зависит. Established host session
+не доказывает наличия внешних Cisco маршрутов и не закрывает отложенное
+ограничение PE defaults.

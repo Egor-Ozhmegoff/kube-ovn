@@ -33,12 +33,10 @@ func TestSpeakerLinuxVRFSession(t *testing.T) {
 		}
 	})
 	peerUp := func() bool {
-		established := false
-		err := speaker.server.ListPeer(ctx, &api.ListPeerRequest{}, func(peer *api.Peer) {
-			established = peer.GetState().GetSessionState() == api.PeerState_SESSION_STATE_ESTABLISHED
-		})
-		return err == nil && established
+		ready, err := speaker.Ready(ctx)
+		return err == nil && ready
 	}
+
 	require.Eventually(t, peerUp, 30*time.Second, 100*time.Millisecond)
 	prefix := netip.MustParsePrefix("10.101.3.11/32")
 	require.NoError(t, speaker.Sync(map[netip.Prefix]struct{}{prefix: {}}))

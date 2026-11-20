@@ -43,6 +43,7 @@ spec:
             runAsUser: 0
             privileged: true
           env:
+            {{- include "kubeovn.apiServerEnv" . | nindent 12 }}
             - name: ENABLE_SSL
               value: "{{ .Values.networking.ENABLE_SSL }}"
             - name: POD_IP

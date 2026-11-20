@@ -59,6 +59,18 @@ func New(ctx context.Context, vrf string, localASN, peerASN uint32, routerID str
 
 func (s *Speaker) Close() { s.server.Stop() }
 
+// Ready proves host-to-PE control-plane connectivity, not the presence of an
+// external fabric route. Fabric withdrawal remains local to the native PE.
+func (s *Speaker) Ready(ctx context.Context) (bool, error) {
+	established := 0
+	err := s.server.ListPeer(ctx, &api.ListPeerRequest{}, func(peer *api.Peer) {
+		if peer.GetState().GetSessionState() == api.PeerState_SESSION_STATE_ESTABLISHED {
+			established++
+		}
+	})
+	return len(s.nextHops) != 0 && established == len(s.nextHops), err
+}
+
 // Sync withdraws before announcing, so loss of availability never waits behind
 // a batch of additions. No routes are restored from a configuration cache.
 func (s *Speaker) Sync(prefixes map[netip.Prefix]struct{}) error {
