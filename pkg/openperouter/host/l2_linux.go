@@ -15,6 +15,7 @@ import (
 )
 
 func EnsureL2(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, subnet *kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, defaultMTU int, reflectionMACs []string) (*L2Attachment, error) {
+	defer openperouter.Measure(ctx, "host.l2")()
 	if err := bootstrap.ValidateL2(vpc.Spec.OpenPERouter, subnet); err != nil {
 		return nil, err
 	}

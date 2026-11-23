@@ -32,6 +32,7 @@ type Attachment struct {
 }
 
 func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, nodeName string, bootstrap *openperouter.Bootstrap, mtu int, workloadCIDRs []string, peReady bool) (*Attachment, error) {
+	defer openperouter.Measure(ctx, "host.l3")()
 	if mtu <= 0 {
 		return nil, errors.New("workload MTU must be initialized before attaching OpenPERouter")
 	}
@@ -168,7 +169,7 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 	ids := map[string]string{openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}
 	desired := &vswitch.Interface{Name: name, Type: "internal", ExternalIDs: map[string]string{"iface-id": logicalPort, openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}}
 	desired.MTURequest = &mtu
-	if err := ovs.EnsureVswitchPort(ctx, provider, ovs.VswitchPortConfig{
+	if err := ensureVswitchPort(ctx, provider, ovs.VswitchPortConfig{
 		BridgeName: "br-int", Port: &vswitch.Port{Name: name, ExternalIDs: ids}, Interface: desired,
 		InterfaceFields: []any{&desired.Type, &desired.ExternalIDs, &desired.MTURequest},
 	}); err != nil {
@@ -301,4 +302,9 @@ func routeDestination(route netlink.Route) string {
 		return "::/0"
 	}
 	return "0.0.0.0/0"
+}
+
+func ensureVswitchPort(ctx context.Context, provider table.Provider, config ovs.VswitchPortConfig) error {
+	defer openperouter.Measure(ctx, "ovs.ensure-port")()
+	return ovs.EnsureVswitchPort(ctx, provider, config)
 }

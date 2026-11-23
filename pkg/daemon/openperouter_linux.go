@@ -98,7 +98,10 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 	defer ticker.Stop()
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, timing := openperouter.WithReconcileTiming(ctx)
+		started := time.Now()
 		err := c.syncOpenPERouter(ctx, active, &bindings, guards)
+		klog.InfoS("OpenPERouter reconciliation timing", "duration", time.Since(started), "stages", timing.Snapshot(), "error", err)
 		cancel()
 		if err != nil {
 			klog.ErrorS(err, "Reconcile local OpenPERouter integration")
@@ -205,7 +208,9 @@ func (c *Controller) syncOpenPERouter(ctx context.Context, active map[string]*op
 	}
 	// A direct local-pod snapshot is the availability lease. Informer/config
 	// caches alone must not renew announcements across an API outage or reboot.
+	podSnapshotDone := openperouter.Measure(ctx, "api.pods")
 	pods, podErr := c.config.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", c.config.NodeName).String()})
+	podSnapshotDone()
 	if podErr != nil {
 		klog.ErrorS(podErr, "Fresh local Pod snapshot unavailable; withdrawing OpenPERouter workload routes")
 	}
@@ -331,6 +336,7 @@ func (c *Controller) syncOpenPERouter(ctx context.Context, active map[string]*op
 }
 
 func (c *Controller) openPERouterBindings(ctx context.Context, reader **ovs.LocalBindingClient, guardNames ...string) (map[string]ovnsb.PortBinding, map[string]bool, error) {
+	defer openperouter.Measure(ctx, "ovs.bindings")()
 	var roots []vswitch.OpenvSwitch
 	if err := c.vswitchTables.Table(&vswitch.OpenvSwitch{}).List(ctx, &roots); err != nil {
 		return nil, nil, err

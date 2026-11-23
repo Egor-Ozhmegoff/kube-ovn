@@ -13,6 +13,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	kubeovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
 	"github.com/kubeovn/kube-ovn/pkg/openperouter"
@@ -20,6 +21,34 @@ import (
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/vswitch"
 )
+
+func TestCleanupDisappearingVRFSlave(t *testing.T) {
+	for _, tt := range []struct {
+		name                string
+		closeErr, detachErr error
+		wantErr             error
+		wantCalls           []string
+	}{
+		{name: "present", wantCalls: []string{"close", "detach"}},
+		{name: "gone before close", closeErr: unix.ENODEV, wantCalls: []string{"close"}},
+		{name: "gone after close", detachErr: unix.ENODEV, wantCalls: []string{"close", "detach"}},
+		{name: "cannot close", closeErr: unix.EPERM, wantErr: unix.EPERM, wantCalls: []string{"close"}},
+		{name: "cannot detach", detachErr: unix.EPERM, wantErr: unix.EPERM, wantCalls: []string{"close", "detach"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			err := closeAndDetachVRFSlave(func() error {
+				calls = append(calls, "close")
+				return tt.closeErr
+			}, func() error {
+				calls = append(calls, "detach")
+				return tt.detachErr
+			})
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Equal(t, tt.wantCalls, calls)
+		})
+	}
+}
 
 func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	provider := kernelOVS(t)
@@ -43,8 +72,8 @@ func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	require.NoError(t, err, "Fence must support recovery without losing the owner")
 	broken := &failDeleteProvider{Provider: provider, fail: true}
 	require.ErrorContains(t, Cleanup(ctx, broken, nil, nil), "injected deletion failure")
-	require.NoError(t, Cleanup(ctx, provider, nil, nil), "retry finishes partial deletion")
-	require.NoError(t, Cleanup(ctx, provider, nil, nil), "final cleanup is idempotent")
+	requireCleanup(t, provider, nil, nil)
+	requireCleanup(t, provider, nil, nil)
 	for _, name := range []string{first.Node.EgressInterface, first.Node.ReturnInterface} {
 		require.Eventually(t, func() bool {
 			i := &vswitch.Interface{Name: name}
@@ -60,7 +89,7 @@ func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	require.NoError(t, err, "same L3VNI can be reused by a new VPC UID")
 	requireOVSOwner(t, provider, node.EgressInterface, "new-uid")
 	requireOVSOwner(t, provider, node.ReturnInterface, "new-uid")
-	require.NoError(t, Cleanup(ctx, provider, nil, nil))
+	requireCleanup(t, provider, nil, nil)
 	runIP(t, "link", "del", node.HostInterface)
 }
 
@@ -84,8 +113,8 @@ func TestL2VNIDeleteAndReuseOtherVRF(t *testing.T) {
 	requireLookup(t, native, 110001)
 	broken := &failDeleteProvider{Provider: provider, fail: true}
 	require.ErrorContains(t, Cleanup(ctx, broken, map[string]bool{"vpc-a": true}, nil), "injected deletion failure")
-	require.NoError(t, Cleanup(ctx, provider, map[string]bool{"vpc-a": true}, nil))
-	require.NoError(t, Cleanup(ctx, provider, map[string]bool{"vpc-a": true}, nil))
+	requireCleanup(t, provider, map[string]bool{"vpc-a": true}, nil)
+	requireCleanup(t, provider, map[string]bool{"vpc-a": true}, nil)
 	link, err := netlink.LinkByName(native)
 	require.NoError(t, err, "native owner, not Kube-OVN, deletes this interface")
 	require.Zero(t, link.Attrs().MasterIndex)
@@ -120,7 +149,7 @@ func TestL2VNIDeleteAndReuseOtherVRF(t *testing.T) {
 	require.Equal(t, guardIndex, second.Guard.Attrs().Index)
 	require.NoError(t, second.Open())
 	requireLookup(t, native, 110002)
-	require.NoError(t, Cleanup(ctx, provider, nil, nil))
+	requireCleanup(t, provider, nil, nil)
 	runIP(t, "link", "del", native)
 }
 
@@ -260,4 +289,17 @@ func (h *failDeleteHandle) Transact(ctx context.Context, method string, ops ...o
 		return errors.New("injected deletion failure")
 	}
 	return h.Handle.Transact(ctx, method, ops...)
+}
+
+// OVS changes the link set asynchronously. An interrupted kernel dump must be
+// discarded and retried, never accepted as a complete cleanup snapshot. Retry
+// only that documented transient result; every other error fails immediately.
+func requireCleanup(t *testing.T, provider table.Provider, vpcs, subnets map[string]bool) {
+	t.Helper()
+	var err error
+	require.Eventually(t, func() bool {
+		err = Cleanup(t.Context(), provider, vpcs, subnets)
+		return !errors.Is(err, netlink.ErrDumpInterrupted)
+	}, time.Second, 10*time.Millisecond, "kernel dump must stabilize")
+	require.NoError(t, err)
 }

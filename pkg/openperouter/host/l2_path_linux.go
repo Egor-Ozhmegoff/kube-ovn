@@ -85,7 +85,7 @@ func prepareL2Path(ctx context.Context, provider table.Provider, vni int32, vpcN
 	}
 	ids := map[string]string{openperouter.OwnerKey: vpcName, openperouter.OwnerKey + "-uid": vpcUID, "subnet-uid": subnetUID, "native-interface": native.Attrs().Name}
 	iface := &vswitch.Interface{Name: guardName, ExternalIDs: map[string]string{"iface-id": openperouter.L2Port(subnetName), openperouter.OwnerKey: vpcName, openperouter.OwnerKey + "-uid": vpcUID, "subnet-uid": subnetUID, "native-interface": native.Attrs().Name}}
-	if err := ovs.EnsureVswitchPort(ctx, provider, ovs.VswitchPortConfig{BridgeName: "br-int", Port: &vswitch.Port{Name: guardName, ExternalIDs: ids}, Interface: iface, InterfaceFields: []any{&iface.ExternalIDs}}); err != nil {
+	if err := ensureVswitchPort(ctx, provider, ovs.VswitchPortConfig{BridgeName: "br-int", Port: &vswitch.Port{Name: guardName, ExternalIDs: ids}, Interface: iface, InterfaceFields: []any{&iface.ExternalIDs}}); err != nil {
 		return nil, err
 	}
 	return &L2Attachment{Guard: guard, Peer: peer, Native: native}, nil

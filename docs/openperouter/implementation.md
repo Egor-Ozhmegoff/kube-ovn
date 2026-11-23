@@ -1,10 +1,13 @@
 # Экспериментальная реализация
 
-Основа: Kube-OVN branch `openperouter`, исходный HEAD
-`8bd912fefaa0a497384bde2ad2c42906e3a14c9c`; OpenPERouter
+Проверенная база: Kube-OVN branch `openperouter`, HEAD
+`4601dcca47fb3a7a4e7f904a616fc9f7dd1cd1f9` плюс dirty source manifest; OpenPERouter
 `Mac_setings_for_l2vni_and_l3vni@60a1285935b10eb0b1cf07e4533faefedde3d4d3`.
-Изменения не развёрнуты. До закрытия release blockers ниже режим нельзя
-считать выполнением всех требований или готовым решением для production.
+Экспериментальный режим не является заявлением о production readiness.
+На test03/test04 развёрнуто исправление scaling на базе `4601dcca47fb`:
+8 VRF / 26 L2, свежая проверка nft state без повторных apply в steady state.
+[Причина, lifecycle и измерения](reconcile-scaling.md),
+[проверки и границы доказательства](validation-results.md).
 
 ## Datapath и владение
 
@@ -113,6 +116,13 @@ FDB/neighbors внутри PE. Старое прямое подключение 
 этот hook и не может открыть частную veth; после host reboot её вообще нет
 до подготовки daemon. Замена nft table/set/chain атомарна. Имена таблиц
 и ownership comment привязаны к Subnet UID.
+
+Каждый EnsureReflection читает текущую целевую таблицу из kernel. Только
+полное совпадение owner, device/hook, set и drop rule разрешает no-op;
+counter values/handles не вызывают замену. Утраченные объекты или потерянный
+после unregister device hook восстанавливаются атомарно до ACK/Open.
+Кэша успешных применений нет. При ошибке сохраняется прежний fencing/withdraw.
+Deadline 4s и lease 30s не расширялись; подробности — в scaling report.
 
 До `createLogicalSwitchPort` controller выполняет протокол допуска:
 

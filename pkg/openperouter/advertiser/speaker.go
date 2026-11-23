@@ -13,6 +13,8 @@ import (
 	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	gobgp "github.com/osrg/gobgp/v4/pkg/server"
+
+	"github.com/kubeovn/kube-ovn/pkg/openperouter"
 )
 
 type Session struct {
@@ -62,6 +64,7 @@ func (s *Speaker) Close() { s.server.Stop() }
 // Ready proves host-to-PE control-plane connectivity, not the presence of an
 // external fabric route. Fabric withdrawal remains local to the native PE.
 func (s *Speaker) Ready(ctx context.Context) (bool, error) {
+	defer openperouter.Measure(ctx, "bgp.ready")()
 	established := 0
 	err := s.server.ListPeer(ctx, &api.ListPeerRequest{}, func(peer *api.Peer) {
 		if peer.GetState().GetSessionState() == api.PeerState_SESSION_STATE_ESTABLISHED {

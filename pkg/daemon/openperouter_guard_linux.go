@@ -26,6 +26,7 @@ type openPERouterGuards struct {
 }
 
 func (c *Controller) registerOpenPERouterGuards(ctx context.Context, guards *openPERouterGuards, subnets []*kubeovnv1.Subnet) error {
+	defer openperouter.Measure(ctx, "guard.register")()
 	node, err := c.config.KubeClient.CoreV1().Nodes().Get(ctx, c.config.NodeName, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -97,6 +98,7 @@ func (g *openPERouterGuards) close(ctx context.Context, vpcUID ...string) error 
 }
 
 func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vpc, subnet *kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, macs []string) error {
+	defer openperouter.Measure(ctx, "guard.protect-open")()
 	registration, ok := guards.joined[subnet.UID]
 	if !ok {
 		return barrier.ErrPending

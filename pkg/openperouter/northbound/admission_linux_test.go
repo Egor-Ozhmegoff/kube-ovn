@@ -156,6 +156,9 @@ func testEthernet(t *testing.T, source string, kind uint16) []byte {
 			sum = (sum & 65535) + (sum >> 16)
 		}
 		binary.BigEndian.PutUint16(frame[56:58], ^uint16(sum))
+		// br_netfilter may trim padding to the IPv6 payload length. Send the
+		// actual IPv6 frame so the receiver can still compare every byte.
+		frame = frame[:14+40+32]
 	}
 	return frame
 }

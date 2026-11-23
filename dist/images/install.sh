@@ -7520,7 +7520,8 @@ spec:
                   on each node.
                 properties:
                   hostASN:
-                    format: int32
+                    format: int64
+                    maximum: 4294967295
                     minimum: 1
                     type: integer
                   hostSessionCIDRs:
@@ -7546,7 +7547,8 @@ spec:
                     - OpenPERouter
                     type: string
                   routerASN:
-                    format: int32
+                    format: int64
+                    maximum: 4294967295
                     minimum: 1
                     type: integer
                   transitCIDRs:

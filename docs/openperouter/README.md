@@ -3,13 +3,12 @@
 Выбрана ветка
 [`Egor-Ozhmegoff/openperouter:Mac_setings_for_l2vni_and_l3vni`](https://github.com/Egor-Ozhmegoff/openperouter/tree/Mac_setings_for_l2vni_and_l3vni),
 закреплён commit **`60a1285935b10eb0b1cf07e4533faefedde3d4d3`**.
-Kube-OVN: ветка `openperouter`, база текущей доработки
-`b7257133dd552bda1a05f59b2b716fadd8bf8223`.
+Kube-OVN: ветка `openperouter`, база scaling-доработки
+`4601dcca47fb3a7a4e7f904a616fc9f7dd1cd1f9` плюс dirty source manifest.
 Локальная MAC-ветка OpenPERouter проверена без переключения его рабочей копии.
 
 **Добавлен экспериментальный runtime Kube-OVN**, API/CRD, apply configurations,
-валидация, opt-in Helm и тесты. По умолчанию режим выключен. Обязательные
-гарантии dataplane пока не подтверждены; fail-closed при пересоздании native
+валидация, opt-in Helm и тесты. По умолчанию режим выключен. Полный Cisco/KubeVirt E2E не подтверждён; fail-closed при пересоздании native
 PE VRF имеет конкретный пробел в API/реализации выбранной версии.
 
 Текущий datapath, владельцы, lifecycle, ограничения Services/L2 и оценка
@@ -17,13 +16,18 @@ PE VRF имеет конкретный пробел в API/реализации 
 Результаты проверок: [validation-results.md](validation-results.md).
 Предыдущая доработка разделила Fence/Cleanup и добавила распределённый допуск
 нового MAC до активации endpoint и безопасное повторное использование L2VNI.
-Текущая доработка membership убирает зависимость admission от регистрации
+Доработка membership убрала зависимость admission от регистрации
 Kubernetes Nodes: участники вступают только через daemon после закрытия пути.
 Проверки предыдущей доработки включали repository suite, OVS/kernel regressions,
 delayed-filter packet test и двухнодовый OVN component lab. Предыдущие native
 OpenPERouter kernel и host-VRF BGP tests привязаны к своим исходникам; они
 не считаются повтором текущей задачи. Актуальные результаты и skips —
 в validation-results.md.
+
+Текущая [scaling-доработка](reconcile-scaling.md) проверена на реальных test03/test04
+с 8 VRF / 26 L2: nft no-op по свежему kernel state, прежний deadline и защита,
+исправление Cleanup ENODEV race. Она не подтверждает масштаб 250–1000 нод
+или бесшовную KubeVirt migration. Актуальная матрица — в validation-results.md.
 
 ## Подтверждённые изменения MAC
 
@@ -32,7 +36,7 @@ OpenPERouter kernel и host-VRF BGP tests привязаны к своим ис�
 | Общий anycast MAC для L2VNI | `L2VNISpec.gatewayMAC: '02:00:05:00:03:00'` вместе с gatewayIPs | CRD/CEL и webhook validation → conversion → `L2VNIParams.GatewayMAC` → `SetupL2VNI` → Linux bridge MAC |
 | Один RMAC всех L3VNI ноды | `routerMAC` в локальном node-config.yaml или CLI `--router-mac` | startup config → `KernelDatapathConfigurator.RouterMAC` → все L3VNIParams → `l3VNIBridgeOptions` → Linux bridge MAC |
 | Разные RMAC между нодами | Различные routerMAC в node-config.yaml | Значения задаёт Ansible; проверки глобальной уникальности в OpenPERouter нет |
-| Восстановление MAC | Штатный reconciler OpenPERouter | Повторно применяет MAC через bridge options; в исходниках есть Linux-тест drift/recreation. 70 native kernel specs выбранного SHA прошли на Linux |
+| Восстановление MAC | Штатный reconciler OpenPERouter | Повторно применяет MAC через bridge options; в исходниках есть Linux-тест drift/recreation. Ранее 70 native kernel specs выбранного SHA прошли на Linux; в scaling-задаче не повторялись |
 
 Gateway MAC immutable: добавление, изменение и удаление поля существующего
 L2VNI запрещены. Нужен план пересоздания при переходе с прежнего значения.

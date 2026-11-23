@@ -1,3 +1,166 @@
+# Scaling reconciliation: test03/test04, 2026-11-23
+
+Исправление развёрнуто и проверено на настоящем двухнодовом кластере,
+только `10.64.244.68/.69`, root через SSH-agent. На завершение активны
+**8 tenant VPC, 8 Pod Subnet, 26 L2 Subnet, 26 barriers / 52 current Active ACK**.
+Тестовый namespace удалён; отзыв workload `/32` и EVPN Type-5 проверен.
+Все системные Pod Ready, management default и API `.112:6443` сохранены.
+
+Kube-OVN: `openperouter@4601dcca47fb3a7a4e7f904a616fc9f7dd1cd1f9` плюс
+незакоммиченные изменения. Существовавшие ASN uint32/int64 annotations и CRD
+сохранены. OpenPERouter рабочая копия `unreachable-route` с изменениями не
+переключалась/не редактировалась; контракт MAC-ветки —
+`60a1285935b10eb0b1cf07e4533faefedde3d4d3`. Deployment repo:
+`openperouter_kubeovn@88bb76f21492194c268fec33b429229d77ad4beb` плюс
+сохранённые изменения пользователя и обновлённые image tag/документация.
+В рамках задачи commit/push не выполнялись.
+
+## Причина и изменения
+
+[Подробный разбор и inter-operation safety](reconcile-scaling.md).
+После применения 26 L2 test04 воспроизводимо завершал проход в 4s после
+22–24 attachments, включая `apply reflection filter: signal: killed`.
+Примеры test03: 3.4–3.98s; nft ensure около 2.3s, API barrier reads
+0.25–0.30s, OVS ensure 0.32–0.40s. Timings inclusive, не суммируются.
+Зафиксирован CPU throttling; лимит 1 CPU не менялся, единственной причиной
+он не объявляется.
+
+- Безусловные 27 nft table listings + 26 apply заменены свежей инспекцией
+  каждой целевой таблицы и заменой только при drift. Stable state: 27 reads,
+  0 apply; кэш успешных применений не добавлялся.
+- Проверяются owner, MAC set, device/hook/priority/policy и drop rule;
+  lost hook после veth recreation обнаруживается даже при том же MAC set.
+  Ошибки не обходят barrier/ACK/Open или fencing/withdraw.
+- Deadline 4s, ticker 5s и lease 30s сохранены. Новых OVN routers/policies,
+  внешних RIB copies или владельцев native FDB/neighbors/FRR нет.
+- В Cleanup исправлен подтверждённый ENODEV между OVS internal-port deletion
+  и закрытием старого VRF slave. Other errors не разрешают detach.
+- Packet fixture отправляет IPv6 frame по объявленной длине payload:
+  прежний тест ошибочно требовал padding, который удалял br_netfilter.
+  Сравнение содержимого кадров и deny/positive assertions не ослаблены.
+
+## Образ и итоговое состояние
+
+`localhost/kube-ovn-openperouter:scaling-4601dcca47fb-dirty-63444922e812`
+
+Обе containerd image записи имеют manifest digest
+`sha256:15060bcd1d6b0b44f215737c7140f20e8b78e6c08ff33de25d573172a2125f12`.
+Runtime image ID обоих CNI:
+`sha256:fd12fa557fe8e41154e8205623430391aad79bfde3c0b025473fbc7edab71995`.
+Пересобран daemon, остальные binaries/tools переиспользованы из исходного
+`git-4601dcca47fb`; этот tag не перезаписан. Code/config source copy
+сверена с локальным SHA256 manifest перед сборкой. Образ импортирован в CRI
+обоих узлов; применены проверенные generated values, Helm revision **4**.
+Для отката оставлены revisions 2/3, исходные values/manifest и старые образы.
+Revision 3 уже содержит scaling fix; 2 возвращает известную проблему при 26 L2.
+OS/systemd/PE bootstrap в этой задаче не менялись.
+
+## Финальный steady state
+
+Отдельное 180s окно **после** рестартов/churn, до удаления тестовых workload:
+
+| Нода | Проходов | Min / median / max | Ошибки/fencing | nft apply | Возраст local BGP route |
+| --- | --- | --- | --- | --- | --- |
+| test03 | 36 | 1.549 / 1.805 / 1.974s | 0 | 0 | 424s |
+| test04 | 36 | 1.569 / 1.717 / 1.928s | 0 | 0 | 243s |
+
+На каждом проходе подтверждены 26 nft inspections, один cleanup inventory,
+78 barrier reads и 42 OVS ensures. Нулевые nft apply не означают устранения
+всех OVS/netlink операций. Расчёт API стоимости и границы 250–1000 нод —
+в scaling report; такой нагрузочный тест не выполнялся.
+
+## Проверки этой задачи
+
+| Проверка | Фактический результат |
+| --- | --- |
+| `make gen-crd`, повторная генерация / SHA256 обоих charts и install.sh | PASS, идемпотентно, пользовательские ASN annotations сохранены |
+| Обычный `make lint` | BLOCKED на verify-crd: generated dirty CRD отличаются от HEAD; commit для обхода не делался |
+| Linux `make -o verify-crd lint`, CI=true | PASS: golangci-lint 2.15.0, 0 issues; modernize без замечаний; пропущен только verify-crd, генерация проверена отдельно |
+| Linux `go test -race ./pkg/openperouter/...` | PASS, включая host/barrier/admission; opt-in kernel/BGP cases отдельно |
+| daemon OpenPERouter и выбранные controller KubeVirt migration regressions | PASS; не настоящая VM migration |
+| 8 VRF / 26 filter unit fixture | PASS: 3 cycles / 78 fresh inspections, нет повторных apply, MAC churn/lost state/partial failure/timeout/retry/foreign ownership |
+| Kernel Cleanup/new UID, VNI A→B reuse, partial rebind, missing terminal, host VRF loss, nft lifecycle | PASS, 6/6 в fresh privileged network-none containers |
+| Дополнительные Cleanup/new UID повторения | PASS, 8/8 fresh containers после ENODEV fix |
+| Delayed-filter production barrier + kernel packet test | PASS, 3/3 fresh containers после исправления IPv6 padding в harness; Ethernet/ARP/NA/RARP deny + positive controls + outbound RARP |
+| Ansible render/verify | PASS, 14/12 tasks, 0 failures; изолированный config/temp, KUBECONFIG=/dev/null |
+| `git diff --check`, `git diff --cached --check` | PASS для обоих изменённых репозиториев |
+
+Kernel mutations выполнялись только внутри одноразовых контейнеров. Go 1.27.4,
+Linux 6.8.0-149, runtime nft 1.1.6, OVS 3.7.2+g8657d8d2ba99,
+OVN 26.03.4+ge49fc5c5dfd8, FRR 10.6.0_git, Podman 5.8.1.
+Ни один kernel regression не запускался
+в host network namespace действующего узла.
+
+## Реальный кластер и dataplane
+
+- Два новых L2 endpoint/MAC допущены на каждой ноде, включая отдельную пару
+  после final deployment. Running/allocated Pod имеют намеренно ложный
+  application readiness; связность и host /32 announcements работают.
+- Pod-only inter-node и L2 inter-node: 10/10 replies каждый, TTL 64.
+  Scoped capture содержит tenant packet `.64.2 → .64.3` во внутреннем
+  VXLAN **Node IP `.112 → .113`**. Это не packet через внешний VTEP.
+- Local PE echo: по 3/3 каждой ноды. Scoped captures на обоих PE показывают
+  `.64.2` только на test03 и `.64.3` только на test04, без SNAT и другого
+  Kubernetes hop. Это доказательство входа в локальный PE, не Cisco E2E.
+- После final restart на обеих нодах введены отражённые Ethernet/ARP/NA/RARP
+  с MAC удалённого Pod: drop counter вырос ровно на 4, в локальный Pod они
+  не пришли. Положительные external Ethernet/NA/RARP пришли по одному;
+  outbound RARP с настоящим Pod MAC пришёл в PE. Для ARP получены реальные
+  replies к внешнему MAC на обеих нодах: OVN ARP responder не обязан
+  доставлять сам request в Pod.
+- Повторный live delete/recreate `pci-etc-z504` на финальном образе:
+  новый Subnet UID, native veth сохранён, private bridge удалён, старый lookup
+  отсутствует, terminal drop обоих families сохранён, затем 26/52 восстановлены.
+  Live VRF A→B смена native OpenPERouter config не выполнялась; это kernel case.
+- Последовательные daemon restarts обеих нод: новый Pod UID, сменились все
+  26 локальных sessions, все ACK актуальны. Межнодовый ping через restart:
+  **1200/1200, 0% потерь за 240s**. Это внутренняя OVN-связность, не обещание
+  нулевой потери внешнего трафика при перезапуске BGP speaker.
+- Bounded API load: 794 успешных CM reads за 40s, максимум 20/s, без ошибок;
+  это не нагрузочный тест большого кластера.
+- 9000-byte inner IPv4 (`-M do -s 8972`): 3/3 между L2 workload, без фрагментации.
+  Default-network DNS через `10.99.0.10` вернул Service `10.99.0.1`.
+- На обеих PE проверены 8 L3 bridge с единым node RMAC (разные между нодами)
+  и 26 L2 bridge с `02:00:05:00:03:00`. EVPN peer только `10.222.252.5`,
+  Established; фактические TCP source — собственные VTEP `.68/.69`.
+- Workload `/32` присутствует в PE unicast RIB при PodReady=false и в EVPN
+  Type-5 с RD `10.110.191.68:270`. После удаления test namespace локальные
+  /32 и Type-5 обоих mgmt workload отсутствуют на обеих PE. Все 26 L2
+  Subnet и исходные site VPC/Pod Subnets оставлены активными.
+- Management default обоих узлов остаётся `10.64.244.1/enp26s0f1`;
+  только явный Node underlay prefix идёт через infra-host. API readyz `.112`
+  и TCP из worker проверены. Старые OVN/etcd базы не трогались.
+
+## Непрошедшие первоначальные запуски и границы
+
+Первоначальные component packet runs падали на положительном NA control:
+принят frame 86 bytes с совпадающим содержимым, тест ждал 96 с padding.
+Оригинальные failed/debug логи сохранены. Первые Cleanup runs поймали ENODEV
+(исправлен) и NLM_F_DUMP_INTR; harness теперь повторяет только неполный dump,
+не принимает partial result и не скрывает другие ошибки. Операторский host
+nft 1.0.9 упал на netdev JSON dump; использован CNI runtime nft 1.1.6,
+host packages не изменялись. Эти попытки не засчитываются как успешные проверки.
+Начальный Ansible запуск с /dev/null в качестве config отклонён по расширению;
+последующий запуск с отдельным .cfg прошёл.
+
+Не выполнялись full make ut/e2e suite, 250–1000-node load test, cold boot,
+недоступность API при OS boot, физический Cisco endpoint/ECMP/MTU/inter-VRF
+policy E2E, Multus/KubeVirt success/cancel/live migration, IPv6 L3 workloads,
+native Type-2 lifecycle/EVPN MAC Mobility или исчерпывающая NetworkPolicy/tenant
+Services matrix. Synthetic PE ingress и RARP не являются VM migration.
+PE unreachable defaults и native endpoint lifecycle lease/epoch остаются
+внешними зависимостями OpenPERouter. Полная tenant→PE underlay fallback
+защита и готовность всей интеграции не заявляются.
+
+Reproducer: [examples/scaling](examples/scaling/README.md).
+Логи и source manifest: ignored `results/linux-scaling-20261123/`, на test03 —
+`/var/tmp/kubeovn-scaling-20261123/results/`. В артефакты не включены kubeconfig,
+Helm Secret manifests, auth files и image tar.
+
+Ниже — **исторические** результаты предыдущих задач, не повтор текущей.
+
+---
+
 # L2 reflection barrier membership, 2026-11-19
 
 База: `openperouter@b7257133dd552bda1a05f59b2b716fadd8bf8223` плюс

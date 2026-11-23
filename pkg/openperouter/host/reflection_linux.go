@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+
+	"github.com/kubeovn/kube-ovn/pkg/openperouter"
 )
 
 const reflectionOwner = "kube-ovn/openperouter/"
@@ -17,37 +19,61 @@ const reflectionOwner = "kube-ovn/openperouter/"
 // EnsureReflection filters only PE-to-OVN ingress. It acts before reserved OVN
 // ND allow flows; outbound RARP and legitimate external sources are unchanged.
 func EnsureReflection(ctx context.Context, uid, device string, macs []string) error {
-	name := reflectionTable(uid)
-	output, err := exec.CommandContext(ctx, "nft", "-j", "list", "tables").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("list reflection tables: %w: %s", err, output)
-	}
-	tables, err := reflectionTables(output)
-	if err != nil {
+	return ensureReflection(ctx, uid, device, macs, runReflectionCommand)
+}
+
+type reflectionCommand func(context.Context, string, ...string) ([]byte, error)
+
+func ensureReflection(ctx context.Context, uid, device string, macs []string, run reflectionCommand) error {
+	defer openperouter.Measure(ctx, "nft.ensure")()
+	if _, err := reflectionRules(uid, device, macs, false); err != nil {
 		return err
 	}
-	existing := false
-	for _, table := range tables {
-		if table.Name == name && table.Family == "netdev" {
-			if table.Comment != reflectionOwner+uid {
-				return fmt.Errorf("refuse foreign reflection table %s", name)
+	output, err := inspectReflection(ctx, run, reflectionTable(uid))
+	existing := err == nil
+	if err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		// A failed inspection is not proof of absence. Only an independently
+		// successful inventory may authorize creating a missing owned table.
+		tables, listErr := readReflectionTablesWith(ctx, run)
+		if listErr != nil {
+			return err
+		}
+		for _, table := range tables {
+			if table.Family == "netdev" && table.Name == reflectionTable(uid) {
+				return err
 			}
-			existing = true
+		}
+	} else {
+		current, err := reflectionCurrent(output, uid, device, macs)
+		if err != nil {
+			return err
+		}
+		if current {
+			return nil
 		}
 	}
 	rules, err := reflectionRules(uid, device, macs, existing)
 	if err != nil {
 		return err
 	}
-	return applyReflection(ctx, rules)
+	return applyReflectionWith(ctx, run, rules)
+}
+
+func inspectReflection(ctx context.Context, run reflectionCommand, name string) ([]byte, error) {
+	defer openperouter.Measure(ctx, "nft.inspect")()
+	output, err := run(ctx, "", "-j", "list", "table", "netdev", name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect reflection filter: %w: %s", err, output)
+	}
+	return output, nil
 }
 
 func cleanupReflection(ctx context.Context, live map[string]bool) error {
-	output, err := exec.CommandContext(ctx, "nft", "-j", "list", "tables").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("list reflection tables: %w: %s", err, output)
-	}
-	tables, err := reflectionTables(output)
+	defer openperouter.Measure(ctx, "nft.cleanup")()
+	tables, err := readReflectionTables(ctx)
 	if err != nil {
 		return err
 	}
@@ -119,10 +145,34 @@ func reflectionRules(uid, device string, macs []string, existing bool) (string, 
 }
 
 func applyReflection(ctx context.Context, rules string) error {
-	cmd := exec.CommandContext(ctx, "nft", "-f", "-")
-	cmd.Stdin = strings.NewReader(rules)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	return applyReflectionWith(ctx, runReflectionCommand, rules)
+}
+
+func applyReflectionWith(ctx context.Context, run reflectionCommand, rules string) error {
+	defer openperouter.Measure(ctx, "nft.apply")()
+	if output, err := run(ctx, rules, "-f", "-"); err != nil {
 		return fmt.Errorf("apply reflection filter: %w: %s", err, output)
 	}
 	return nil
+}
+
+func readReflectionTables(ctx context.Context) ([]reflectionTableInfo, error) {
+	return readReflectionTablesWith(ctx, runReflectionCommand)
+}
+
+func readReflectionTablesWith(ctx context.Context, run reflectionCommand) ([]reflectionTableInfo, error) {
+	defer openperouter.Measure(ctx, "nft.list")()
+	output, err := run(ctx, "", "-j", "list", "tables")
+	if err != nil {
+		return nil, fmt.Errorf("list reflection tables: %w: %s", err, output)
+	}
+	return reflectionTables(output)
+}
+
+func runReflectionCommand(ctx context.Context, input string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "nft", args...)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
+	return cmd.CombinedOutput()
 }

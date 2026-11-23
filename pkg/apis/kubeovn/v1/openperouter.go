@@ -24,8 +24,12 @@ type OpenPERouterIntegration struct {
 	// +kubebuilder:validation:MaxItems=2
 	HostSessionCIDRs []string `json:"hostSessionCIDRs"`
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	// +kubebuilder:validation:Format=int64
 	RouterASN uint32 `json:"routerASN"`
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	// +kubebuilder:validation:Format=int64
 	HostASN uint32 `json:"hostASN"`
 }
 

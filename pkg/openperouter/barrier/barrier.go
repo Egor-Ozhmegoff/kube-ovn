@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/util/retry"
+
+	"github.com/kubeovn/kube-ovn/pkg/openperouter"
 )
 
 var ErrPending = errors.New("reflection protection is not acknowledged")
@@ -56,6 +58,7 @@ func Digest(macs []string) string {
 func Name(uid types.UID) string { return "kube-ovn-opr-guard-" + Digest([]string{string(uid)})[:24] }
 
 func (s Store) Read(ctx context.Context) (*corev1.ConfigMap, State, error) {
+	defer openperouter.Measure(ctx, "barrier.read")()
 	cm, err := s.Maps.Get(ctx, Name(s.SubnetUID), metav1.GetOptions{})
 	if err != nil {
 		return nil, State{}, err
@@ -141,6 +144,7 @@ func (s Store) Ready(ctx context.Context, revision string) error {
 }
 
 func (s Store) update(ctx context.Context, create bool, apply func(types.UID, *State) error) error {
+	defer openperouter.Measure(ctx, "barrier.update")()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cm, state, err := s.Read(ctx)
 		if apierrors.IsNotFound(err) && create {
