@@ -307,8 +307,8 @@ func ensureVswitchPort(ctx context.Context, provider table.Provider, config ovs.
 	return ovs.EnsureVswitchPort(ctx, provider, config)
 }
 
-// Open revalidates the local generation after PE routes have been read back.
-func (a *Attachment) Open() error {
+// Check revalidates the local host generation without opening ingress.
+func (a *Attachment) Check() error {
 	for _, expected := range []netlink.Link{a.VRF, a.Peer, a.Return, a.Egress} {
 		actual, err := netlink.LinkByName(expected.Attrs().Name)
 		if err != nil {
@@ -323,6 +323,14 @@ func (a *Attachment) Open() error {
 		if vrf, ok := actual.(*netlink.Vrf); ok && vrf.Table != a.VRF.Table {
 			return errors.New("host attachment VRF table changed")
 		}
+	}
+	return nil
+}
+
+// Open requires the fresh OVN/PE checks performed by the caller as well.
+func (a *Attachment) Open() error {
+	if err := a.Check(); err != nil {
+		return err
 	}
 	return netlink.LinkSetUp(a.Egress)
 }

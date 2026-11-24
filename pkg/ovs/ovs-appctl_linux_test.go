@@ -1,9 +1,11 @@
 package ovs
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -106,4 +108,14 @@ func TestAppctlUnknownTarget(t *testing.T) {
 
 	_, err := Appctl("foo", "version")
 	require.ErrorContains(t, err, `unknown component "foo"`)
+}
+
+func TestAppctlContextStopsHungCommand(t *testing.T) {
+	directory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(directory, cmdOvsAppctl), []byte("#!/bin/sh\nwhile :; do :; done\n"), 0o700))
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err := AppctlContext(ctx, "/tmp/test-control-socket", "connection-status")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

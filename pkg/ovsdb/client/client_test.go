@@ -9,10 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ovn-kubernetes/libovsdb/model"
+
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/vswitch"
 )
 
@@ -137,4 +140,28 @@ func TestMonitorWithTimeoutBreaksReconnectDeadlock(t *testing.T) {
 			return false
 		}
 	}, time.Second, time.Millisecond)
+}
+
+func TestOvsDbConnectionHonorsCancelledParent(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	backend, err := NewOvsDbClientContext(ctx, "Open_vSwitch", "unix:/tmp/no-database", model.ClientDBModel{}, nil, 3, 10)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, backend)
+}
+
+type cancelledParentBackend struct{ table.Backend }
+
+func (cancelledParentBackend) NewMonitor(...table.MonitorOption) *table.Monitor {
+	return &table.Monitor{}
+}
+
+func (cancelledParentBackend) Monitor(ctx context.Context, _ *table.Monitor) (table.MonitorCookie, error) {
+	return table.MonitorCookie{}, ctx.Err()
+}
+
+func TestInitialBackendMonitorHonorsParent(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, monitorBackendWithTimeout(ctx, cancelledParentBackend{}, nil, time.Second), context.Canceled)
 }

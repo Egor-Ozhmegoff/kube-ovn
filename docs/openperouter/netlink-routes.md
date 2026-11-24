@@ -69,7 +69,7 @@ readback перед Open. Namespace generation проверяется по inode
 
 Общий этап читает свежие VPC/Subnet snapshots, bootstrap/node identity,
 SB/OVS state. Pod snapshot больше не требуется. Ошибка этих общих источников,
-общий deadline/cancellation или невозможность выполнить общую cleanup/Sweep
+истечение отдельного бюджета общей подготовки или невозможность выполнить общую cleanup/Sweep
 сохраняют полный fencing и withdrawal. Ошибка ACK удалённой сети после
 успешной физической Cleanup сохраняет registration для retry; рабочие VPC
 из-за неё не закрываются.
@@ -83,10 +83,20 @@ bound/installed return port, route conflict/netlink error, L2 guard registration
 3. Независимо от ошибок fencing/API пытается отозвать routes этого OwnerID.
 4. Логирует ошибки и продолжает другие VPC. Неуспешное закрытие не выдаёт Closed.
 
-Closure имеет отдельный 3s budget. Общий reconcile budget 4s / ticker 5s
-сохранены; shared deadline остаётся общим отказом, не обходится локальным
-`continue`. Возможное исчерпание budget и масштаб полной RIB требуют отдельного
-измерения. Native PE namespace/link retirement остаётся обязанностью native owner.
+Daemon stop context не имеет deadline всего цикла. Общая подготовка и каждое
+обновление общего snapshot ограничены 4s; каждый VPC получает отдельные 4s,
+а его закрытие — независимые 3s. Истечение VPC budget не вызывает общий
+Fence/Sweep. Неуспешное закрытие сохраняется для повторной попытки до обычного
+reconcile этого UID. Половина оставшегося closure budget резервируется для
+withdrawal после fencing/ACK. Ticker остаётся 5s, обработка последовательная;
+это не гарантия периода или общего времени цикла.
+
+Перед следующим VPC snapshot обновляется; перед Open повторяются проверки
+конфигурации и живого dataplane. Настоящая ошибка общего источника остаётся
+общим отказом. Неоднозначный timeout общего чтения внутри VPC проверяется
+независимым общим budget. Подробности и ограничения:
+[reconcile-timeouts.md](reconcile-timeouts.md).
+Native PE namespace/link retirement остаётся обязанностью native owner.
 
 Удалённые VPC routes очищаются Sweep по live UID. Host Cleanup сохраняет
 свой ownership/lifecycle, включая internal OVS Port/Interface и terminal guards.

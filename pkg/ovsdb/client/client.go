@@ -93,10 +93,10 @@ func monitorWithTimeout(c initialMonitorClient, monitors []client.MonitorOption,
 	return err
 }
 
-func monitorBackendWithTimeout(c table.Backend, monitors []table.MonitorOption, timeout time.Duration) error {
+func monitorBackendWithTimeout(parent context.Context, c table.Backend, monitors []table.MonitorOption, timeout time.Duration) error {
 	monitor := c.NewMonitor(monitors...)
 	monitor.Method = ovsdb.ConditionalMonitorRPC
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	_, err := c.Monitor(ctx, monitor)
 	return err
@@ -111,6 +111,14 @@ func NewOvsDbClient(
 	ovsDbConTimeout int,
 	ovsDbInactivityTimeout int,
 ) (table.Backend, error) {
+	return NewOvsDbClientContext(context.Background(), db, addr, dbModel, monitors, ovsDbConTimeout, ovsDbInactivityTimeout)
+}
+
+// NewOvsDbClientContext also bounds connection and initial monitor by parent.
+func NewOvsDbClientContext(parent context.Context, db, addr string, dbModel model.ClientDBModel, monitors []table.MonitorOption, ovsDbConTimeout, ovsDbInactivityTimeout int) (table.Backend, error) {
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
 	klog.Infof("creating ovsdb client for %s database at %s", db, addr)
 
 	var ssl bool
@@ -164,9 +172,10 @@ func NewOvsDbClient(
 	}
 
 	klog.Infof("connecting to %s database server %s", db, addr)
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	ctx, cancel := context.WithTimeout(parent, connectTimeout)
 	defer cancel()
 	if err = c.Connect(ctx); err != nil {
+		c.Close()
 		klog.Errorf("failed to connect to %s database server %s: %v", db, addr, err)
 		return nil, err
 	}
@@ -174,7 +183,7 @@ func NewOvsDbClient(
 
 	if len(monitors) != 0 {
 		klog.Infof("setting up monitors for %s database on server %s", db, addr)
-		if err = monitorBackendWithTimeout(backend, monitors, connectTimeout); err != nil {
+		if err = monitorBackendWithTimeout(parent, backend, monitors, connectTimeout); err != nil {
 			backend.Close()
 			klog.Errorf("failed to monitor database on %s server %s: %v", db, addr, err)
 			return nil, err

@@ -15,6 +15,22 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// Namespace loss/replacement affects every tenant, unlike a missing VRF/veth.
+var (
+	ErrNamespaceUnavailable = errors.New("PE network namespace unavailable")
+	ErrNamespaceChanged     = errors.New("PE namespace generation changed")
+)
+
+// CheckNamespace probes the common namespace without changing routes or links.
+func (m Manager) CheckNamespace(ctx context.Context) error {
+	session, err := m.connect(ctx)
+	if err != nil {
+		return err
+	}
+	session.handle.Close()
+	return ctx.Err()
+}
+
 type Attachment struct {
 	UID, VRF, Device             string
 	HostIndex                    int
@@ -122,7 +138,7 @@ func (m Manager) remove(ctx context.Context, match func(Route) bool) error {
 func (m Manager) connect(ctx context.Context) (*Session, error) {
 	ns, err := netns.GetFromPath(m.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("open PE namespace: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrNamespaceUnavailable, err)
 	}
 	defer func() {
 		if err := ns.Close(); err != nil {
@@ -135,7 +151,7 @@ func (m Manager) connect(ctx context.Context) (*Session, error) {
 	}
 	handle, err := netlink.NewHandleAt(ns, unix.NETLINK_ROUTE)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrNamespaceUnavailable, err)
 	}
 	s := &Session{path: m.Namespace, identity: identity, handle: handle, states: make(map[string]attachmentState)}
 	if err := s.budget(ctx); err != nil {
@@ -219,10 +235,10 @@ func (s *Session) inspect(ctx context.Context, a Attachment) (attachmentState, e
 func (s *Session) Check(ctx context.Context, uid string) error {
 	info, err := os.Stat(s.path)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrNamespaceUnavailable, err)
 	}
 	if !os.SameFile(info, s.identity) {
-		return errors.New("PE namespace generation changed")
+		return ErrNamespaceChanged
 	}
 	state, ok := s.states[uid]
 	if !ok {

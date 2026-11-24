@@ -99,7 +99,7 @@ func (g *openPERouterGuards) close(ctx context.Context, vpcUID ...string) error 
 	return result
 }
 
-func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vpc, subnet *kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, macs []string) error {
+func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vpc, subnet *kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, macs []string, fresh func() error) error {
 	defer openperouter.Measure(ctx, "guard.protect-open")()
 	registration, ok := guards.joined[subnet.UID]
 	if !ok {
@@ -110,7 +110,15 @@ func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vp
 		var err error
 		attachment, err = ophost.EnsureL2(ctx, c.vswitchTables, vpc, subnet, bootstrap, c.config.MTU, macs)
 		return err
-	}, func() error { return attachment.Open() })
+	}, func() error {
+		if err := fresh(); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return attachment.Open()
+	})
 }
 
 // Called only after successful host cleanup proves removed subnet paths closed.

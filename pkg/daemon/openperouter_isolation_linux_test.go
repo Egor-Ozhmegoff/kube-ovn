@@ -131,7 +131,7 @@ func TestOpenPERouterScopedFailureLinux(t *testing.T) {
 			require.NoError(t, m.Reconcile(t.Context(), b, nil))
 			isolationIP(t, "link", "set", "path-b", "up")
 		}
-		require.NoError(t, reconcileOpenPERouterVPCs(t.Context(), vpcs, func(vpc *kubeovnv1.Vpc) error {
+		require.NoError(t, runOpenPERouterIsolation(t.Context(), vpcs, func(vpc *kubeovnv1.Vpc) error {
 			if err := openPERouterReturnReady("return-"+vpc.Name, bound, installed); err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func TestOpenPERouterScopedFailureLinux(t *testing.T) {
 	require.NoError(t, m.Reconcile(t.Context(), b, nil))
 	bound["return-b"], installed["return-b"] = ovnsb.PortBinding{}, true
 	isolationIP(t, "-n", "isolation-pe", "link", "set", b.Device, "down")
-	require.NoError(t, reconcileOpenPERouterVPCs(t.Context(), vpcs, func(vpc *kubeovnv1.Vpc) error {
+	require.NoError(t, runOpenPERouterIsolation(t.Context(), vpcs, func(vpc *kubeovnv1.Vpc) error {
 		if err := openPERouterReturnReady("return-"+vpc.Name, bound, installed); err != nil {
 			return err
 		}

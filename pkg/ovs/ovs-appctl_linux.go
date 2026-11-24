@@ -1,6 +1,8 @@
 package ovs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,12 +25,12 @@ const (
 	ovnSBCtlSocket = ovnRunDir + "/ovnsb_db.ctl"
 )
 
-func appctlByTarget(appctlCmd, target, command string, args ...string) (string, error) {
+func appctlByTarget(ctx context.Context, appctlCmd, target, command string, args ...string) (string, error) {
 	args = slices.Insert(args, 0, "-t", target, command)
-	cmd := exec.Command(appctlCmd, args...)
+	cmd := exec.CommandContext(ctx, appctlCmd, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to run command %q: %w", cmd.String(), err)
+		return "", fmt.Errorf("failed to run command %q: %w", cmd.String(), errors.Join(ctx.Err(), err))
 	}
 	return string(output), nil
 }
@@ -98,6 +100,11 @@ func OvnDatabaseControl(db, command string, args ...string) (string, error) {
 // path of a control socket, or the name of a component whose control socket is
 // resolved from its pid file.
 func Appctl(target, command string, args ...string) (string, error) {
+	return AppctlContext(context.Background(), target, command, args...)
+}
+
+// AppctlContext cancels the control command with its caller's budget.
+func AppctlContext(ctx context.Context, target, command string, args ...string) (string, error) {
 	if !filepath.IsAbs(target) {
 		socket, err := ctlSocketPath(target)
 		if err != nil {
@@ -111,5 +118,5 @@ func Appctl(target, command string, args ...string) (string, error) {
 		cmd = cmdOvnAppctl
 	}
 
-	return appctlByTarget(cmd, target, command, args...)
+	return appctlByTarget(ctx, cmd, target, command, args...)
 }

@@ -1,3 +1,82 @@
+# Изоляция timeout VPC: 2026-11-24
+
+База: `openperouter@1af7a97729db56c2203b2ddee3064ad9d998b0ca` плюс текущие
+изменения рабочего дерева. В начале задачи дерево/index были чистыми.
+Commit/push, staging, live cluster, OpenPERouter и deployment automation не
+изменялись. Это отдельное исправление поверх исторического отчёта ниже.
+
+## Причина и реализация
+
+Общий 4s context продолжал истекать при отдельном 3s закрытии B. Последующий
+`ctx.Err()` попадал в общий обработчик и закрывал A. Теперь общая подготовка,
+каждый VPC и закрытие имеют независимые бюджеты от daemon stop context.
+Scope ошибки определяется production runner, используемым `runOpenPERouter`;
+локальный timeout не возвращается как общий отказ. Failed closure сохраняется
+для retry; Closed ACK возможен только после успешного Fence, withdrawal
+пытается выполниться независимо от Fence/ACK. Половина оставшегося closure
+budget резервируется для withdrawal. Подробнее: [reconcile-timeouts.md](reconcile-timeouts.md).
+
+После задержавшегося VPC следующий получает свежие API/bootstrap/SB/OVS данные.
+Перед Open повторяются проверки конфигурации/return binding/installed port и
+поколения namespace/VRF/veth/host attachment. L2 final checks остаются внутри
+barrier callback. Общие ошибки snapshots, Sweep/Cleanup и общей инфраструктуры
+сохраняют общий fail-closed; неоднозначный read timeout проверяется отдельным
+общим budget. OVS appctl и initial OVSDB connect/monitor наследуют context.
+
+## Фактически выполненные проверки
+
+| Проверка | Результат и граница |
+| --- | --- |
+| Полный `make lint`, финальный код | **PASS**, gen-crd/verify-crd, golangci-lint 2.15.0: 0 issues, modernize; без пропуска verify-crd. Go 1.27.4, Linux target; generators/modernize исполняются host-native |
+| Generated/API/module drift | Нет изменений CRD, clients, charts, go.mod/go.sum; отдельная генерация clients не нужна |
+| Linux test compilation, финальный код | **PASS** daemon и ovsdb/client для linux/amd64 |
+| Portable race, финальный код на macOS | **PASS** `go test -race ./pkg/openperouter/...`; Linux-only packages/kernel tests этим не покрываются |
+| Первый portable запуск в sandbox | **FAIL** northbound: Unix socket запрещён sandbox; ovsdb/client не собирается для Darwin из-за существующего unix.ETH_P_IPV6. Повтор OpenPERouter suites с разрешённым локальным Unix socket прошёл; client проверяется Linux-прогоном ниже |
+| Linux race, финальный код | **PASS** daemon OpenPERouter tests ×10, выбранные ovs appctl/RARP tests ×5, полный ovsdb/client и `pkg/openperouter/...` ×1; network-none container на **10.64.244.143** |
+| Linux unit/component, более ранняя промежуточная версия | **PASS** daemon OpenPERouter, appctl/binding, client; privileged network-none component проверяет реальные Fence/Closed/Withdraw B при сохранении link/guard/routes A. OVS rows stubbed; это не полный OVN/dataplane стенд |
+| Kernel component, финальный код | **PASS**, `go test -race ./pkg/daemon -run "^TestOpenPERouterScopedFailureLinux$" -count=5 -v` в disposable privileged network-none container: реальные links/routes/guard Close сохраняются у A при закрытии B; controlled позднее истечение closure B не вызывает глобальный Fence/Sweep. Только OVS rows stubbed |
+| Форматирование и whitespace | gofmt, git diff --check, git diff --cached --check: PASS |
+
+Controlled tests покрывают оба порядка A→B/B→A, позднее закрытие B, собственный
+VPC timeout, ошибку и retry закрытия, общий prepare timeout/сбой snapshots,
+совпадение shared generation failure с local timeout, daemon stop на разных
+этапах и независимый финальный cleanup. Один smoke test использует настоящий
+20ms context deadline; остальные управляют истечением без длинных sleep.
+Смена snapshot/return binding после задержки B не позволяет открыть A по старым
+данным. Тесты идут через тот же `once` error boundary, что и production run.
+
+После явного разрешения пользователя согласованный Go module payload и три
+публичных fixture переданы на 10.64.244.143; первоначальная блокировка auto-review
+снята для этого состава файлов и назначения. Архив проверен на совпадение с
+финальными локальными исходниками, его SHA256 подтверждён на lab. Финальные
+race и kernel component выполнены заново; это не переименование результатов
+промежуточной версии. Финальный component-log содержит ожидаемые ошибки timeout
+из controlled test injection; все пять повторов завершились PASS.
+
+Логи `final-race.log`, `final-component.log`, hashes архива/исходников и локальные
+результаты сохранены под существующим gitignore в
+`results/vpc-timeouts-20261124/`. Логи более раннего component-прогона отдельно
+сохранены как исторические. Изменений host network namespace или живого кластера
+не выполнялось; тестовые containers удаляются через `--rm`.
+
+## Непроверенные свойства
+
+Полный `make ut`, Helm render/lint и Linux packet suites финальной версии не
+запускались; charts/API не менялись. Не проверялись новый масштаб 8 VRF/26 L2,
+API load/churn, двухнодовый OVN/Cisco dataplane, reflection packets, реальная
+KubeVirt migration или Type-2 mobility на финальной версии. Последовательный
+цикл может занимать сумму бюджетов VPC/retries; дополнительная стоимость
+refresh требует нагрузочного измерения. Отказ синхронного syscall не всегда
+прерывается context немедленно. Неуспешные fencing/withdrawal логируются и
+повторяются; немедленная успешная очистка при недоступном kernel/API не обещается.
+
+Прежние внешние ограничения сохраняются: OpenPERouter attachment-only lifecycle
+без hostSession/BGP, внешний FRR export и отложенные PE defaults. SIGKILL
+сохраняет kernel subnet routes до restart/внешнего withdrawal. Это исправление
+не подтверждает готовность всей Cisco/KubeVirt интеграции.
+
+---
+
 # Routed subnet routes и изоляция VPC: 2026-11-23
 
 Рабочая ветка `openperouter`, HEAD `bc3682e5996f959fa0e50e3e0079f0dfe2d9d540`.

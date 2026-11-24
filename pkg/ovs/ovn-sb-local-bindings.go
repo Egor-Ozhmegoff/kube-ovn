@@ -9,6 +9,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/model"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	ovsclient "github.com/kubeovn/kube-ovn/pkg/ovsdb/client"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/ovnsb"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/table"
 )
@@ -31,9 +32,9 @@ func NewLocalBindingClient(ctx context.Context, endpoint, chassisName string, ad
 		return nil, err
 	}
 	chassis := &ovnsb.Chassis{Name: chassisName}
-	backend, err := connectOvsdb(ovnsb.DatabaseName, endpoint, dbModel, []table.MonitorOption{
+	backend, err := ovsclient.NewOvsDbClientContext(ctx, ovnsb.DatabaseName, endpoint, dbModel, []table.MonitorOption{
 		table.WithConditionalTable(chassis, model.Condition{Field: &chassis.Name, Function: ovsdb.ConditionEqual, Value: chassisName}),
-	}, 3, 10, 0, "OpenPERouter local binding reader")
+	}, 3, 10)
 	if err != nil {
 		return nil, err
 	}

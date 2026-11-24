@@ -75,7 +75,9 @@ Pod snapshots, per-endpoint prefix selection/lease и host BGP runtime удал�
 Return binding/installed OVS VIF, actual VRF/veth и routes проверяются до Open.
 Неисправный VPC закрывается с его UID: Fence → Closed guards при успешном
 закрытии → scoped route withdrawal. Другие VPC продолжают reconciliation.
-Ошибки общих API/SB/OVS snapshots/deadline сохраняют общий fail-closed путь.
+Ошибки общих API/SB/OVS snapshots и отдельного бюджета общей подготовки
+сохраняют общий fail-closed путь. Timeout конкретного VPC закрывает только его
+пути, guards и routes; неуспешное закрытие повторяется перед восстановлением UID.
 
 Сохранены защищённый L2 path и membership/session barrier. После Cleanup
 удалённой сети Closed публикуется до удаления локальной guard registration.
@@ -116,8 +118,10 @@ FDB/neighbors внутри PE. Старое прямое подключение 
 counter values/handles не вызывают замену. Утраченные объекты или потерянный
 после unregister device hook восстанавливаются атомарно до ACK/Open.
 Кэша успешных применений нет. При ошибке сохраняется прежний fencing/withdraw.
-Общий deadline 4s сохранён; endpoint lease удалена. Scope ошибок описан выше;
-исторические измерения nft — в scaling report.
+Общего deadline всего цикла больше нет: подготовка/refresh ограничены 4s,
+каждый VPC — своими 4s, закрытие — независимыми 3s. Endpoint lease удалена.
+[Бюджеты, свежесть и остановка](reconcile-timeouts.md); исторические
+измерения nft — в scaling report.
 
 До `createLogicalSwitchPort` controller выполняет протокол допуска:
 
