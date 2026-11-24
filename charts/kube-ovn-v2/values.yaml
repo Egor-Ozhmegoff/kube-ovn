@@ -1413,3 +1413,4 @@ ipsec:
 openperouter:
   enabled: false
   bootstrapDir: /var/lib/openperouter
+  namespacePath: /var/run/netns/perouter

@@ -200,6 +200,7 @@ spec:
           {{- end }}
           - --enable-openperouter=true
           - {{ printf "--openperouter-bootstrap=%s" .Values.openperouter.bootstrapDir | quote }}
+          - {{ printf "--openperouter-namespace=%s" .Values.openperouter.namespacePath | quote }}
           {{- end }}
           - --secure-serving={{- .Values.func.SECURE_SERVING }}
           {{- if or .Values.networking.TLS_MIN_VERSION .Values.networking.TLS_MAX_VERSION .Values.networking.TLS_CIPHER_SUITES }}

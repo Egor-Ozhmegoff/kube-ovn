@@ -1,3 +1,8 @@
+> Для текущего subnet-route runtime сначала устранить внешний blocker attachment-only
+> API OpenPERouter. Новые выполненные component/kernel tests и skips перечислены
+> в [validation-results.md](validation-results.md); исторические прогоны ниже
+> не подтверждают новую реализацию. Контракт routes/FRR: [netlink-routes.md](netlink-routes.md).
+
 # Изолированный план приёмки
 
 Полная E2E приёмка **не завершена**. Актуальные component tests, Linux
@@ -57,9 +62,9 @@ overlay скрывает промежуточный Kubernetes gateway.
 | 6 | Отключить внешнюю fabric и обмениваться A↔B внутри VRF | Прямой внутренний OVN VXLAN, без host-e/fabric hop. Проверить Pods в разных subnets одного VRF. |
 | 7 | Обмен tenant-a↔tenant-b при запрещённом и затем разрешённом Cisco policy | Сначала drop; затем путь виден на fabric в обоих направлениях. В host и perouter нет локального route leaking. Внутренняя OVN доставка между VPC отсутствует. |
 | 8 | Внешний L2 endpoint: ARP, IPv6 ND, unknown unicast, broadcast/multicast | Ровно требуемая доставка без повторного BUM и без дублирующих внутренних/внешних путей. Только local MAC/IP экспортируется локальным PE; удалить VM — отозвать Type-2 и очистить FDB/neighbors. Проверить заданный anycast MAC на обоих L2VNI. |
-| 9 | Мигрировать VM A на node-b, затем migration rollback и повторную миграцию | IP/MAC сохраняются, анонс переходит только после active binding; MAC mobility sequence корректна. Source PE перестаёт объявлять endpoint, stale FDB/neighbors удалены, policy/LB сохраняются. |
+| 9 | Мигрировать VM A на node-b, затем migration rollback и повторную миграцию | IP/MAC сохраняются; CIDR routes не меняются из-за migration, Type-2 следует реальной native MAC активности после активации; MAC mobility sequence корректна. Source PE перестаёт объявлять endpoint, stale FDB/neighbors удалены, policy/LB сохраняются. |
 | 10 | По очереди restart agent, OVS, ovn-controller, FRR, OpenPERouter controller; удалить veth/router namespace; reboot VM | Нет анонсов из stale cache, окно отказа измерено. Endpoint переобнаруживается по новому ifindex, без второго владельца. Gateway MAC и общий RMAC восстановлены; нет leaked links/VRF. |
-| 11 | С нуля reboot обе VM с недоступным API и очищенным runtime workload состоянием | Bootstrap поднимает underlay и EVPN сессии из локальных файлов. Workload routes отсутствуют до свежей binding/API sync. Для уже работающих workload отдельно проверить истечение freshness lease при API outage. |
+| 11 | С нуля reboot обе VM с недоступным API и очищенным runtime workload состоянием | Bootstrap поднимает underlay и EVPN сессии из локальных файлов. Routed subnet CIDR отсутствуют до готовности attachment/return binding и сетевой конфигурации. Для уже работающих workload отдельно проверить scoped отзыв subnet routes при потере attachment и общий отзыв при ошибке fresh API snapshot; SIGKILL отдельно должен показать сохранение stale routes до restart/external withdrawal. |
 | 12 | DF/PMTUD IPv4 и IPv6, размер на границе допустимой MTU и выше | Сохранена доставка допустимого размера, ICMP PTB/fragmentation-needed возвращается корректно. Нет silent blackhole на локальной L3/L2 границе. |
 | 13 | ClusterIP, NodePort, LB VIP, session affinity, backend change; NetworkPolicy deny/allow | OVN LB/NAT и ACL действуют в обоих направлениях, включая внешнее L2 ingress и миграцию. Проверить local/remote backend и trafficPolicy. Service NAT не нарушает обещанное сохранение source workload prefix для обычного routed трафика. |
 

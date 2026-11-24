@@ -12,8 +12,6 @@ spec:
     l3vni: 10001
     transitCIDRs: [169.254.32.0/20]
     hostSessionCIDRs: [169.254.16.0/20]
-    routerASN: 64514
-    hostASN: 64515
 ---
 apiVersion: v1
 kind: Namespace

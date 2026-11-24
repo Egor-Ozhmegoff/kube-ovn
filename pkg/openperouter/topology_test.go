@@ -66,7 +66,6 @@ func TestRejectUnsafeTopology(t *testing.T) {
 		"wrong mode":        func(s *kubeovnv1.OpenPERouterIntegration) { s.Mode = "localnet" },
 		"missing VRF":       func(s *kubeovnv1.OpenPERouterIntegration) { s.VRF = "" },
 		"invalid VRF":       func(s *kubeovnv1.OpenPERouterIntegration) { s.VRF = "x/y" },
-		"same ASN":          func(s *kubeovnv1.OpenPERouterIntegration) { s.HostASN = s.RouterASN },
 		"overlapping pools": func(s *kubeovnv1.OpenPERouterIntegration) { s.TransitCIDRs = s.HostSessionCIDRs },
 		"IPv4 no session":   func(s *kubeovnv1.OpenPERouterIntegration) { s.HostSessionCIDRs = []string{"fd00:16::/64"} },
 		"duplicate family":  func(s *kubeovnv1.OpenPERouterIntegration) { s.TransitCIDRs = append(s.TransitCIDRs, "169.254.48.0/20") },
@@ -88,6 +87,5 @@ func testIntegration() *kubeovnv1.OpenPERouterIntegration {
 	return &kubeovnv1.OpenPERouterIntegration{
 		Mode: Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001,
 		TransitCIDRs: []string{"169.254.32.0/20"}, HostSessionCIDRs: []string{"169.254.16.0/20"},
-		RouterASN: 64514, HostASN: 64515,
 	}
 }

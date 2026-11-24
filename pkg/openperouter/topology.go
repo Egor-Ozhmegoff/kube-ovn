@@ -1,5 +1,6 @@
 // Package openperouter describes the OVN/host boundary. It never owns devices
-// or FRR configuration inside the OpenPERouter namespace.
+// or FRR configuration inside the OpenPERouter namespace. Workload routes in
+// that namespace are owned separately by the routes package.
 package openperouter
 
 import (
@@ -122,8 +123,8 @@ func Validate(spec *kubeovnv1.OpenPERouterIntegration) error {
 	if !vrfName.MatchString(spec.VRF) || spec.L3VNIName == "" {
 		return errors.New("VRF (1..15 characters) and native L3VNI name are required")
 	}
-	if spec.L3VNI < 1 || spec.L3VNI > 16777215 || spec.RouterASN == 0 || spec.HostASN == 0 || spec.RouterASN == spec.HostASN {
-		return errors.New("valid VNI and distinct nonzero router/host ASNs are required")
+	if spec.L3VNI < 1 || spec.L3VNI > 16777215 {
+		return errors.New("valid VNI is required")
 	}
 	transit, err := validatePools(spec.TransitCIDRs)
 	if err != nil {
@@ -131,16 +132,16 @@ func Validate(spec *kubeovnv1.OpenPERouterIntegration) error {
 	}
 	host, err := validatePools(spec.HostSessionCIDRs)
 	if err != nil {
-		return fmt.Errorf("host session: %w", err)
+		return fmt.Errorf("local attachment: %w", err)
 	}
 	for _, p := range transit {
 		for _, q := range host {
 			if p.Overlaps(q) {
-				return fmt.Errorf("transit %s overlaps native host session %s", p, q)
+				return fmt.Errorf("transit %s overlaps native host attachment %s", p, q)
 			}
 		}
 		if !slices.ContainsFunc(host, func(q netip.Prefix) bool { return p.Addr().BitLen() == q.Addr().BitLen() }) {
-			return fmt.Errorf("transit family %s has no native host session", p)
+			return fmt.Errorf("transit family %s has no native host attachment", p)
 		}
 	}
 	return nil

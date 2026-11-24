@@ -14,8 +14,9 @@ func exampleBootstrap(t *testing.T) *Bootstrap {
 	t.Helper()
 	directory := t.TempDir()
 	for target, source := range map[string]string{
-		"node-config.yaml":   "node-a/node-config.yaml",
-		"openpe_fabric.yaml": "openpe_fabric.yaml",
+		"kube-ovn-attachments.yaml": "kube-ovn-attachments.yaml",
+		"node-config.yaml":          "node-a/node-config.yaml",
+		"openpe_fabric.yaml":        "openpe_fabric.yaml",
 	} {
 		data, err := os.ReadFile(filepath.Join("../../docs/openperouter/examples", source))
 		require.NoError(t, err)
@@ -44,8 +45,8 @@ func TestNativeBootstrapContract(t *testing.T) {
 func TestRejectNativeConfigurationDrift(t *testing.T) {
 	for name, mutate := range map[string]func(*Bootstrap){
 		"duplicate L3VNI": func(b *Bootstrap) { b.L3VNIs = append(b.L3VNIs, b.L3VNIs[0]) },
-		"ASN drift":       func(b *Bootstrap) { b.L3VNIs[0].HostSession.HostASN++ },
-		"pool drift":      func(b *Bootstrap) { b.L3VNIs[0].HostSession.LocalCIDRs = []string{"169.254.64.0/20"} },
+		"legacy BGP":      func(b *Bootstrap) { b.L3VNIs[0].HostSession = &NativeHostSession{} },
+		"pool drift":      func(b *Bootstrap) { b.Attachments[0].LocalCIDRs = []string{"169.254.64.0/20"} },
 		"VRF drift":       func(b *Bootstrap) { b.L3VNIs[0].VRF = "other" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -74,4 +75,21 @@ func TestRejectConflictingRoutingDomains(t *testing.T) {
 	subnet.Spec.NatOutgoing = false
 	subnet.Spec.CIDRBlock = "169.254.32.0/24"
 	require.ErrorContains(t, ValidateSubnetBinding(subnet, a, nil), "overlaps")
+}
+
+func TestRejectMissingNetlinkMetadata(t *testing.T) {
+	directory := t.TempDir()
+	data, err := os.ReadFile("../../docs/openperouter/examples/node-a/node-config.yaml")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "node-config.yaml"), data, 0o600))
+	_, err = ReadBootstrap(directory)
+	require.ErrorContains(t, err, "netlink mode requires kube-ovn-attachments.yaml")
+	for _, metadata := range []string{"version: legacy\n", "version: netlink-v1\nunknown: true\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "kube-ovn-attachments.yaml"), []byte(metadata), 0o600))
+		_, err = ReadBootstrap(directory)
+		require.Error(t, err)
+	}
+	b := exampleBootstrap(t)
+	b.Attachments = append(b.Attachments, b.Attachments[0])
+	require.ErrorContains(t, b.Validate(testIntegration()), "expected one non-BGP local attachment")
 }

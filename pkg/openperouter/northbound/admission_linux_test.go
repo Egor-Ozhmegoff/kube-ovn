@@ -193,3 +193,57 @@ func packetDelivered(t *testing.T, sender, receiver int, name string, packet []b
 	}
 	return false
 }
+
+// This is a Linux bridge/FDB movement component test, not an EVPN Type-2 or
+// KubeVirt migration test. It exercises the installed production nft guard.
+func TestL2MACMoveWithReflectionGuard(t *testing.T) {
+	if os.Getenv("KUBE_OVN_DISPOSABLE_LAB") != "true" {
+		t.Skip("requires disposable network-none container")
+	}
+	_, err := os.Stat("/.dockerenv")
+	require.NoError(t, err)
+	require.Zero(t, os.Geteuid())
+	ip := func(args ...string) {
+		t.Helper()
+		out, err := exec.CommandContext(t.Context(), "ip", args...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	ip("link", "add", "move-br", "type", "bridge")
+	for _, pair := range [][2]string{{"old-vm", "old-edge"}, {"new-vm", "new-edge"}, {"fabric", "oplf10101"}} {
+		ip("link", "add", pair[0], "type", "veth", "peer", "name", pair[1])
+		ip("link", "set", pair[1], "master", "move-br")
+		ip("link", "set", pair[0], "up")
+		ip("link", "set", pair[1], "up")
+	}
+	ip("link", "set", "move-br", "up")
+	mac := "02:00:00:00:01:12"
+	require.NoError(t, host.EnsureReflection(t.Context(), "moving-vm", "oplf10101", []string{mac}))
+	source, target, fabric := packetSocket(t, "old-vm"), packetSocket(t, "new-vm"), packetSocket(t, "fabric")
+	learnedOn := func(name string) bool {
+		link, err := netlink.LinkByName(name)
+		require.NoError(t, err)
+		entries, err := netlink.NeighList(link.Attrs().Index, unix.AF_BRIDGE)
+		require.NoError(t, err)
+		for _, entry := range entries {
+			if entry.HardwareAddr.String() == mac && entry.LinkIndex == link.Attrs().Index {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, packetDelivered(t, source, fabric, "old-vm", testEthernet(t, mac, 0x8035)))
+	require.True(t, learnedOn("old-edge"), "prepared silent target cannot move FDB")
+	require.True(t, packetDelivered(t, target, fabric, "new-vm", testEthernet(t, mac, 0x8035)), "target activation RARP must reach PE")
+	require.True(t, learnedOn("new-edge"))
+	for _, kind := range []uint16{0x88b5, 0x0806, 0x86dd, 0x8035} {
+		require.False(t, packetDelivered(t, fabric, target, "fabric", testEthernet(t, mac, kind)), "reflection must not steal the moved MAC")
+	}
+	require.True(t, learnedOn("new-edge"))
+	require.True(t, packetDelivered(t, fabric, target, "fabric", testEthernet(t, "02:aa:00:00:00:01", 0x86dd)), "legitimate external ND remains allowed")
+	require.True(t, packetDelivered(t, source, fabric, "old-vm", testEthernet(t, mac, 0x8035)), "cancellation/source reactivation RARP passes")
+	require.True(t, learnedOn("old-edge"))
+	require.True(t, packetDelivered(t, target, fabric, "new-vm", testEthernet(t, mac, 0x8035)))
+	ip("link", "del", "old-vm")
+	require.True(t, learnedOn("new-edge"), "late source cleanup must not delete the target FDB entry")
+	require.True(t, packetDelivered(t, fabric, target, "fabric", testEthernet(t, "02:aa:00:00:00:01", 0x88b5)))
+}

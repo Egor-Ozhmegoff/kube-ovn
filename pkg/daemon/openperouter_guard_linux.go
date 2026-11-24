@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,7 +26,7 @@ type openPERouterGuards struct {
 	joined  map[types.UID]guardRegistration
 }
 
-func (c *Controller) registerOpenPERouterGuards(ctx context.Context, guards *openPERouterGuards, subnets []*kubeovnv1.Subnet) error {
+func (c *Controller) prepareOpenPERouterGuards(ctx context.Context, guards *openPERouterGuards) error {
 	defer openperouter.Measure(ctx, "guard.register")()
 	node, err := c.config.KubeClient.CoreV1().Nodes().Get(ctx, c.config.NodeName, metav1.GetOptions{})
 	if err != nil {
@@ -36,8 +37,12 @@ func (c *Controller) registerOpenPERouterGuards(ctx context.Context, guards *ope
 	}); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (c *Controller) registerOpenPERouterGuards(ctx context.Context, guards *openPERouterGuards, vpc *kubeovnv1.Vpc, subnets []*kubeovnv1.Subnet) error {
 	for _, subnet := range subnets {
-		if subnet.Spec.OpenPERouterL2 == nil {
+		if subnet.Spec.Vpc != vpc.Name || subnet.Spec.OpenPERouterL2 == nil || !subnet.DeletionTimestamp.IsZero() {
 			continue
 		}
 		store := barrier.Store{Maps: c.config.KubeClient.CoreV1().ConfigMaps(c.config.PodNamespace), SubnetName: subnet.Name, SubnetUID: subnet.UID}
@@ -49,17 +54,13 @@ func (c *Controller) registerOpenPERouterGuards(ctx context.Context, guards *ope
 			return err
 		}
 		if previous, ok := guards.joined[subnet.UID]; ok && previous.uid == cm.UID {
-			if state.Members[string(node.UID)].Session != guards.session {
-				return fmt.Errorf("OpenPERouter guard session superseded on %s", node.Name)
+			if state.Members[string(guards.nodeUID)].Session != guards.session {
+				return fmt.Errorf("OpenPERouter guard session superseded on %s", c.config.NodeName)
 			}
 			continue
 		}
 		// Fence the old local edge before replacing an acknowledgement/session.
-		vpc, err := c.openPERouterVpcs.Get(subnet.Spec.Vpc)
-		if err != nil {
-			return err
-		}
-		if err := store.JoinAfterClose(ctx, cm.UID, node.UID, node.Name, guards.session, func() error {
+		if err := store.JoinAfterClose(ctx, cm.UID, guards.nodeUID, c.config.NodeName, guards.session, func() error {
 			return ophost.CloseL2(subnet.Spec.OpenPERouterL2.VNI, string(vpc.UID), string(subnet.UID))
 		}); err != nil {
 			return err
@@ -86,15 +87,16 @@ func (g *openPERouterGuards) bindNode(ctx context.Context, uid types.UID, closeP
 }
 
 func (g *openPERouterGuards) close(ctx context.Context, vpcUID ...string) error {
+	var result error
 	for _, registration := range g.joined {
 		if len(vpcUID) > 0 && registration.vpcUID != vpcUID[0] {
 			continue
 		}
 		if err := registration.store.Close(ctx, registration.uid, g.nodeUID, g.session); err != nil && !apierrors.IsNotFound(err) {
-			return err
+			result = errors.Join(result, err)
 		}
 	}
-	return nil
+	return result
 }
 
 func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vpc, subnet *kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, macs []string) error {
@@ -109,4 +111,21 @@ func (c *Controller) ensureAcknowledgedL2(ctx context.Context, vpc *kubeovnv1.Vp
 		attachment, err = ophost.EnsureL2(ctx, c.vswitchTables, vpc, subnet, bootstrap, c.config.MTU, macs)
 		return err
 	}, func() error { return attachment.Open() })
+}
+
+// Called only after successful host cleanup proves removed subnet paths closed.
+func (g *openPERouterGuards) forgetRemoved(ctx context.Context, live map[string]bool) error {
+	var result error
+	for subnetUID, registration := range g.joined {
+		if live[string(subnetUID)] {
+			continue
+		}
+		err := registration.store.Close(ctx, registration.uid, g.nodeUID, g.session)
+		if err != nil && !apierrors.IsNotFound(err) {
+			result = errors.Join(result, err)
+			continue
+		}
+		delete(g.joined, subnetUID)
+	}
+	return result
 }

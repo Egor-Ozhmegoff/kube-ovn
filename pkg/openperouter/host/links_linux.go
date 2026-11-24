@@ -31,7 +31,7 @@ type Attachment struct {
 	Peer   netlink.Link
 }
 
-func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, nodeName string, bootstrap *openperouter.Bootstrap, mtu int, workloadCIDRs []string, peReady bool) (*Attachment, error) {
+func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, nodeName string, bootstrap *openperouter.Bootstrap, mtu int, workloadCIDRs []string) (*Attachment, error) {
 	defer openperouter.Measure(ctx, "host.l3")()
 	if mtu <= 0 {
 		return nil, errors.New("workload MTU must be initialized before attaching OpenPERouter")
@@ -94,7 +94,7 @@ func Ensure(ctx context.Context, provider table.Provider, vpc *kubeovnv1.Vpc, no
 		return nil, err
 	}
 	// Egress becomes usable only after the return interface and routes exist.
-	egress, err := ensureInternal(ctx, provider, node.EgressInterface, transit.EgressPort, transit.EgressMAC, transit.EgressAddresses, vpc, vrf, mtu, peReady)
+	egress, err := ensureInternal(ctx, provider, node.EgressInterface, transit.EgressPort, transit.EgressMAC, transit.EgressAddresses, vpc, vrf, mtu, false)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +166,7 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 	if err := EnsureIsolation(name, vrf.Table); err != nil {
 		return nil, err
 	}
+	fresh := errors.Is(err, table.ErrNotFound)
 	ids := map[string]string{openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}
 	desired := &vswitch.Interface{Name: name, Type: "internal", ExternalIDs: map[string]string{"iface-id": logicalPort, openperouter.OwnerKey: vpc.Name, openperouter.OwnerKey + "-uid": string(vpc.UID)}}
 	desired.MTURequest = &mtu
@@ -179,7 +180,7 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 	if err != nil {
 		return nil, err
 	}
-	if !open {
+	if !open && (fresh || link.Attrs().MasterIndex != vrf.Index || link.Attrs().HardwareAddr.String() != mac || link.Attrs().MTU != mtu || checkNativeAddresses(link, addresses) != nil) {
 		if err := netlink.LinkSetDown(link); err != nil {
 			return nil, err
 		}
@@ -217,15 +218,12 @@ func ensureInternal(ctx context.Context, provider table.Provider, name, logicalP
 		}
 	}
 	if !open {
-		if err := netlink.LinkSetDown(link); err != nil {
-			return nil, err
-		}
-		return link, nil
+		return netlink.LinkByName(name)
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
 		return nil, err
 	}
-	return link, nil
+	return netlink.LinkByName(name)
 }
 
 func checkNativeAddresses(link netlink.Link, expected []string) error {
@@ -307,4 +305,24 @@ func routeDestination(route netlink.Route) string {
 func ensureVswitchPort(ctx context.Context, provider table.Provider, config ovs.VswitchPortConfig) error {
 	defer openperouter.Measure(ctx, "ovs.ensure-port")()
 	return ovs.EnsureVswitchPort(ctx, provider, config)
+}
+
+// Open revalidates the local generation after PE routes have been read back.
+func (a *Attachment) Open() error {
+	for _, expected := range []netlink.Link{a.VRF, a.Peer, a.Return, a.Egress} {
+		actual, err := netlink.LinkByName(expected.Attrs().Name)
+		if err != nil {
+			return err
+		}
+		if actual.Attrs().Index != expected.Attrs().Index || actual.Attrs().Alias != expected.Attrs().Alias || (expected != a.VRF && actual.Attrs().MasterIndex != a.VRF.Index) {
+			return fmt.Errorf("attachment generation changed: %s", expected.Attrs().Name)
+		}
+		if expected != a.Egress && actual.Attrs().Flags&net.FlagUp == 0 {
+			return fmt.Errorf("attachment is no longer up: %s", expected.Attrs().Name)
+		}
+		if vrf, ok := actual.(*netlink.Vrf); ok && vrf.Table != a.VRF.Table {
+			return errors.New("host attachment VRF table changed")
+		}
+	}
+	return netlink.LinkSetUp(a.Egress)
 }

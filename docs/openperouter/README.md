@@ -1,5 +1,11 @@
 # Интеграция с OpenPERouter: выбранная версия
 
+Текущая реализация заменяет локальный GoBGP и per-endpoint IP routes на [маршруты OVN-подсетей](netlink-routes.md).
+MAC-ветка пока не создаёт L3 attachment без hostSession/BGP; совместный
+запуск заблокирован до отдельного native контракта. SIGKILL withdrawal требует
+внешнего механизма. Приведённые ниже deployment/scaling результаты исторические.
+
+
 Выбрана ветка
 [`Egor-Ozhmegoff/openperouter:Mac_setings_for_l2vni_and_l3vni`](https://github.com/Egor-Ozhmegoff/openperouter/tree/Mac_setings_for_l2vni_and_l3vni),
 закреплён commit **`60a1285935b10eb0b1cf07e4533faefedde3d4d3`**.
@@ -24,7 +30,7 @@ OpenPERouter kernel и host-VRF BGP tests привязаны к своим ис�
 не считаются повтором текущей задачи. Актуальные результаты и skips —
 в validation-results.md.
 
-Текущая [scaling-доработка](reconcile-scaling.md) проверена на реальных test03/test04
+Историческая [scaling-доработка](reconcile-scaling.md) проверена на реальных test03/test04
 с 8 VRF / 26 L2: nft no-op по свежему kernel state, прежний deadline и защита,
 исправление Cleanup ENODEV race. Она не подтверждает масштаб 250–1000 нод
 или бесшовную KubeVirt migration. Актуальная матрица — в validation-results.md.
@@ -69,7 +75,7 @@ python3 hack/check-openperouter.py /tmp/openperouter-mac-audit
 `status: api-reviewed`, `blockers: []`, `dataplaneTested: false`.
 Это успешное воспроизведение source review, а не готовность dataplane.
 Отдельное поле `integrationBlockers` фиксирует пробелы fail-closed lifecycle
-и удаления Type-2; пустые MAC API `blockers` не означают готовую интеграцию.
+и native non-BGP L3 attachment; пустые MAC API `blockers` не означают готовую интеграцию.
 Сохраняются явные profiles `--profile upstream` и `--profile egor-fork` для
 исторических commits; они возвращают exit 2 с соответствующими блокерами.
 Exit 1 — отсутствующие/отличающиеся bytes, требующие новой проверки.
@@ -89,7 +95,7 @@ Go и Helm скачаны напрямую в `/private/tmp` с проверко
 и настройки proxy не менялись. Source audit не является dataplane test.
 
 Отложенная зависимость: kernel defaults при native PE VRF recreate. Она
-не исправляется в Kube-OVN. Native Type-2 lifecycle API отсутствует;
+не исправляется в Kube-OVN. Native Type-2 learning/aging и MAC Mobility ещё требуют E2E измерений;
 допуск новых MAC теперь ждёт подтверждения host reflection guards; throughput при churn требует измерений. Cisco, Kubernetes
 Service/NetworkPolicy и KubeVirt migration требуют полной E2E проверки.
 Минимальные необходимые изменения native owner перечислены в

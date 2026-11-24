@@ -15,18 +15,25 @@ import (
 	kubeovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
 )
 
-// Bootstrap is configuration, not proof that any workload is available.
+// Bootstrap describes attachments, not proof of local dataplane readiness.
 // Only fields needed to verify the host-side contract are decoded here.
 type Bootstrap struct {
-	Index     int
-	RouterMAC string
-	L3VNIs    []NativeL3VNI
-	L2VNIs    []NativeL2VNI
+	Index       int
+	RouterMAC   string
+	L3VNIs      []NativeL3VNI
+	L2VNIs      []NativeL2VNI
+	Attachments []LocalL3Attachment
 }
 
-type NativeHostSession struct {
-	ASN, HostASN uint32
-	LocalCIDRs   []string
+// NativeHostSession detects an incompatible legacy contract, never configures BGP.
+type NativeHostSession struct{}
+
+// LocalL3Attachment is Kube-OVN bootstrap metadata, not an OpenPERouter API.
+// Configuration management must supply it only after a native non-BGP veth
+// lifecycle is available. Runtime verifies the actual peer and VRF separately.
+type LocalL3Attachment struct {
+	L3VNIName  string
+	LocalCIDRs []string
 }
 
 type NativeL3VNI struct {
@@ -130,6 +137,21 @@ func ReadBootstrap(directory string) (*Bootstrap, error) {
 		b.L3VNIs = append(b.L3VNIs, config.L3VNIs...)
 		b.L2VNIs = append(b.L2VNIs, config.L2VNIs...)
 	}
+	data, err = os.ReadFile(filepath.Join(directory, "kube-ovn-attachments.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("netlink mode requires kube-ovn-attachments.yaml and native L3 attachments without BGP: %w", err)
+	}
+	var contract struct {
+		Version       string
+		L3Attachments []LocalL3Attachment
+	}
+	if err := yaml.UnmarshalStrict(data, &contract); err != nil {
+		return nil, err
+	}
+	if contract.Version != "netlink-v1" {
+		return nil, errors.New("unsupported Kube-OVN attachment contract; expected netlink-v1")
+	}
+	b.Attachments = contract.L3Attachments
 	return b, nil
 }
 
@@ -143,19 +165,31 @@ func (b *Bootstrap) Validate(spec *kubeovnv1.OpenPERouterIntegration) error {
 			continue
 		}
 		matches++
-		if l3.VRF != spec.VRF || l3.VNI != spec.L3VNI || l3.HostSession == nil ||
-			l3.HostSession.ASN != spec.RouterASN || l3.HostSession.HostASN != spec.HostASN {
-			return fmt.Errorf("VPC disagrees with native L3VNI %s", l3.Name)
+		if l3.HostSession != nil {
+			return fmt.Errorf("L3VNI %s uses legacy hostSession: it creates local BGP and also owns the L3 veth; migrate the external owner to a non-BGP attachment contract before enabling netlink mode", l3.Name)
 		}
-		a, c := slices.Clone(l3.HostSession.LocalCIDRs), slices.Clone(spec.HostSessionCIDRs)
-		slices.Sort(a)
-		slices.Sort(c)
-		if !slices.Equal(a, c) {
-			return fmt.Errorf("VPC host session pools disagree with native L3VNI %s", l3.Name)
+		if l3.VRF != spec.VRF || l3.VNI != spec.L3VNI {
+			return fmt.Errorf("VPC disagrees with native L3VNI %s", l3.Name)
 		}
 	}
 	if matches != 1 {
 		return fmt.Errorf("expected one native L3VNI %s, found %d", spec.L3VNIName, matches)
+	}
+	matches = 0
+	for _, attachment := range b.Attachments {
+		if attachment.L3VNIName != spec.L3VNIName {
+			continue
+		}
+		matches++
+		actual, wanted := slices.Clone(attachment.LocalCIDRs), slices.Clone(spec.HostSessionCIDRs)
+		slices.Sort(actual)
+		slices.Sort(wanted)
+		if !slices.Equal(actual, wanted) {
+			return fmt.Errorf("VPC attachment pools disagree with local contract for %s", attachment.L3VNIName)
+		}
+	}
+	if matches != 1 {
+		return fmt.Errorf("expected one non-BGP local attachment contract for %s, found %d", spec.L3VNIName, matches)
 	}
 	return nil
 }

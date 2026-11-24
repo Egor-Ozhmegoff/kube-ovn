@@ -50,6 +50,7 @@ type Configuration struct {
 	MaxMTU                int
 	EnableOpenPERouter    bool
 	OpenPERouterBootstrap string
+	OpenPERouterNamespace string
 	MSS                   int
 	EnableMirror          bool
 	MirrorNic             string
@@ -121,6 +122,7 @@ func ParseFlags() *Configuration {
 		argMTU                   = pflag.Int("mtu", 0, "The MTU used by pod interfaces in overlay networks; when set to 0, it is derived from the selected interface MTU based on the network type and IP family")
 		argMaxMTU                = pflag.Int("max-mtu", 0, "Upper bound applied to the auto-computed pod MTU (0 disables the cap). Useful when the underlay uses jumbo frames but pod traffic egresses to a 1500-byte path (e.g. the internet), where the uncapped value would cause fragmentation or PMTUD-dependent blackholes. Ignored when --mtu is set explicitly.")
 		argEnableOpenPERouter    = pflag.Bool("enable-openperouter", false, "Enable experimental host-side OpenPERouter integration")
+		argOpenPERouterNamespace = pflag.String("openperouter-namespace", "/var/run/netns/perouter", "Existing PE namespace handle; Kube-OVN never creates it")
 		argOpenPERouterBootstrap = pflag.String("openperouter-bootstrap", "/var/lib/openperouter", "Read-only native OpenPERouter bootstrap directory")
 		argEnableMirror          = pflag.Bool("enable-mirror", false, "Enable traffic mirror (default false)")
 		argMirrorNic             = pflag.String("mirror-iface", "mirror0", "The mirror nic name that will be created by kube-ovn")
@@ -205,6 +207,7 @@ func ParseFlags() *Configuration {
 		MaxMTU:                    *argMaxMTU,
 		EnableOpenPERouter:        *argEnableOpenPERouter,
 		OpenPERouterBootstrap:     *argOpenPERouterBootstrap,
+		OpenPERouterNamespace:     *argOpenPERouterNamespace,
 		EnableMirror:              *argEnableMirror,
 		MirrorNic:                 *argMirrorNic,
 		BindSocket:                *argBindSocket,

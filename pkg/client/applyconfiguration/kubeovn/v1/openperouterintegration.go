@@ -32,10 +32,10 @@ type OpenPERouterIntegrationApplyConfiguration struct {
 	L3VNI     *int32  `json:"l3vni,omitempty"`
 	// Dedicated OVN-to-host transit pools, separate from workload/hostSession pools.
 	TransitCIDRs []string `json:"transitCIDRs,omitempty"`
-	// Must match hostSession.localCIDRs in the native L3VNI bootstrap.
+	// Local host/PE attachment pools for routed OVN subnet return traffic.
+	// The legacy field name does not enable BGP or per-endpoint IP announcements.
+	// Must match kube-ovn-attachments.yaml; native hostSession is incompatible.
 	HostSessionCIDRs []string `json:"hostSessionCIDRs,omitempty"`
-	RouterASN        *uint32  `json:"routerASN,omitempty"`
-	HostASN          *uint32  `json:"hostASN,omitempty"`
 }
 
 // OpenPERouterIntegrationApplyConfiguration constructs a declarative configuration of the OpenPERouterIntegration type for use with
@@ -93,21 +93,5 @@ func (b *OpenPERouterIntegrationApplyConfiguration) WithHostSessionCIDRs(values 
 	for i := range values {
 		b.HostSessionCIDRs = append(b.HostSessionCIDRs, values[i])
 	}
-	return b
-}
-
-// WithRouterASN sets the RouterASN field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the RouterASN field is set to the value of the last call.
-func (b *OpenPERouterIntegrationApplyConfiguration) WithRouterASN(value uint32) *OpenPERouterIntegrationApplyConfiguration {
-	b.RouterASN = &value
-	return b
-}
-
-// WithHostASN sets the HostASN field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the HostASN field is set to the value of the last call.
-func (b *OpenPERouterIntegrationApplyConfiguration) WithHostASN(value uint32) *OpenPERouterIntegrationApplyConfiguration {
-	b.HostASN = &value
 	return b
 }

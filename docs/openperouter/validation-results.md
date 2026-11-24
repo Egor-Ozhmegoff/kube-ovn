@@ -1,3 +1,108 @@
+# Routed subnet routes и изоляция VPC: 2026-11-23
+
+Рабочая ветка `openperouter`, HEAD `bc3682e5996f959fa0e50e3e0079f0dfe2d9d540`.
+Несвязанные изменения прошлого этапа сохранены; per-endpoint часть явно
+переработана по новому требованию. Дерево не считалось чистым HEAD.
+Index не изменялся. Commit/push, live cluster, deployment automation и другие
+репозитории не затрагивались. Подробный контракт:
+[netlink-routes.md](netlink-routes.md).
+
+## Изменения текущего этапа
+
+- Удалены per-workload prefix selection, Pod API snapshots и проверки/публикация
+  endpoint /32,/128. Старые endpoint-only tests заменены subnet/isolation tests.
+  Нормальный pkg/speaker, L2 reflection и штатная KubeVirt обработка сохранены.
+- В PE устанавливаются только CIDR готовых OVN Subnet без openPERouterL2.
+  Native L2VNI connected routes, Type-2/FDB/ARP/ND/MAC Mobility остаются native.
+  Host-side protocol 202 routes уже существовали и сохранены.
+- Новый PE protocol 203 с сохраняемым VPC OwnerID в metric, включая IPv6,
+  обеспечивает scoped diff/withdraw, restart/recreation и cleanup удалённых VPC.
+  Table берётся из фактического VRF; чужие routes/defaults не заменяются.
+- VPC-local return/attachment/bootstrap/guard/route errors: Fence UID → Closed
+  только после успешного закрытия → scoped withdrawal; другие VPC продолжают.
+  Общие snapshot/deadline ошибки сохраняют общий fencing. Ошибка ACK уже
+  физически удалённого пути сохраняет registration для retry без закрытия A.
+- После startup Fence legacy cleanup удаляет только прежнюю reserved endpoint
+  signature (201/42760 с дополнительными признаками). Нужен документированный
+  остановленный переход; mixed-version upgrade не поддержан.
+- API descriptions/CRD/generated apply configuration обновлены, legacy адресация
+  attachment сохранена. Новых route knobs не добавлено. Оба charts сохраняют
+  namespace/API endpoint настройки. Документация и FRR fixture обновлены.
+
+## Фактические результаты
+
+Linux/dataplane component tests выполнены на **10.64.244.143** в новых
+`--network none` containers; для kernel suites добавлен `--privileged`.
+Host network namespace и рабочие ноды не использовались для network mutations.
+Воспроизводимый runner: [subnet-regressions.sh](../../hack/openperouter/subnet-regressions.sh).
+Raw results, версии и source hashes локально:
+[results/subnet-routing-20261123](results/subnet-routing-20261123/),
+под существующим gitignore; это не новые отслеживаемые repository fixtures.
+
+| Проверка | Фактический результат |
+| --- | --- |
+| Linux runner | **13/13 групп PASS**, status.tsv содержит exit 0 каждой группы |
+| Routed subnet unit | PASS: L2VNI исключены, IPv4/IPv6 CIDR, deletion/not-ready/provider, NAT rejection |
+| Planner/ownership unit | PASS: scoped diff, other VPC/default preservation, exact-prefix conflict, 26 subnet batch, partial failure/cancellation, legacy signature controls |
+| Daemon isolation unit | PASS: порядок A/B, unprepared/previously-open B, closure error, общий cancellation |
+| VPC isolation kernel component | PASS: production Fence/guard Close/Withdraw B при потере return binding и самого PE attachment, A link/guard/routes остаются; ошибка fencing не отменяет попытку withdrawal. Только OVS row snapshot stubbed |
+| PE subnet routes + FRR 10.6.0 | PASS: реальные IPv4 /24 и IPv6 /64 в table 23001, отличной от VNI 10001, корректный local next-hop; BGP RIB redistribution/withdrawal |
+| Pod/VM metadata churn | PASS component: fake API source/target launcher creation/deletion при реальном kernel route reconcile не меняют CIDR RIB; не создают endpoint routes/L2 CIDR через L3 |
+| FRR negative controls | PASS: foreign/service/default/synthetic protocol-186 host routes не экспортированы этим route-map. Это не реальный external BGP import test |
+| Actual recreation/startup cleanup | PASS: VRF/veth/namespace generation, ifindex/table change, repeated Sweep/PurgeLegacy; stale endpoint /32,/128 удалены, foreign controls сохранены |
+| Process SIGKILL/restart | PASS как подтверждение, что kernel subnet routes сохраняются после SIGKILL; restart Sweep их удаляет. Standalone child test skipped, но child выполнен и убит parent test |
+| Existing kernel regressions | 7/7 PASS: internal Cleanup/recreate, sequential L2VNI reuse, partial rebind/terminal guards, VRF loss, nft lifecycle, delayed admission packets |
+| MAC movement packet component | PASS: RARP перемещает Linux FDB source→target, silent prepared target не переносит FDB; reflection Ethernet/ARP/ND/RARP блокируется; external ND и исходящий RARP проходят; cancellation/re-activation и late source deletion сохраняют актуальный FDB |
+| OVN binding unit | PASS: primary/additional activation через RARP, отмена и переключение primary. Это не запуск KubeVirt |
+| Portable race suites | PASS `go test -race ./pkg/openperouter/...`; Linux-only tests выполнены отдельно runner |
+| CRD/client generation | Выполнены make gen-crd и update-codegen.sh; relevant CRD/apply configuration/deepcopy stability PASS |
+| **make lint** | **НЕ ПРОШЁЛ**: verify-crd сравнивает незакоммиченные generated CRD с index/HEAD. Commit или staging для обхода не делались |
+| Отдельные lint/modernize | PASS с 0 issues через `CI=true GOOS=linux make -o verify-crd lint`; это не успешный полный make lint. Для modernize используется host-native executable, анализирует Linux packages |
+| Helm 4.3.2 | PASS default/opt-in lint обоих charts, render namespace override; прежние SemVer/icon warnings остаются |
+| Audit harness | 4/4 PASS; не считается native API/dataplane audit |
+| Formatting/syntax/diff | gofmt, shell syntax, git diff --check и git diff --cached --check PASS |
+
+FRR показал существенное отличие metric encoding: `0x4cXXXXXX` отображается
+как distance **76**, metric **младшие 24 бита**. Это учтено в lab route-map.
+Production export/import policy должен обеспечить native FRR owner; нельзя
+реэкспортировать конфликтующие fabric-копии локально доступных OVN CIDR.
+
+Первые прогоны не считались успешными: исправлены устаревший /32 lookup в
+fixture, FRR metric filter и отменённый testing.Context в cleanup. Полный
+codegen создал несвязанный baseline drift 62 clients/informers. Перед его
+исключением проверено отсутствие этих diff в снимке начала этапа, сделаны
+backups и подтверждено совпадение bytes при повторном generator run. Существующая
+openperouterintegration.go доработка сохранена. Автоматическая проверка сначала
+отклонила массовое восстановление без такого доказательства; оно не выполнялось.
+
+## Внешние зависимости и непроверенные сценарии
+
+**Совместного deployment с MAC-веткой ещё нет.** В закреплённом OpenPERouter
+`60a1285935b10eb0b1cf07e4533faefedde3d4d3` L3 veth по-прежнему связан с
+hostSession: conversion без HostSession даёт LinkIPs=nil, SetupL3VNI пропускает
+setupHostVeth. Нужен non-BGP native attachment lifecycle. Metadata Kube-OVN
+не выдаётся за существующий native API. Код OpenPERouter не менялся.
+
+Не выполнены новым runtime: два совместимых OpenPERouter PE с настоящим
+EVPN Type-2 MAC/IP Mobility, Cisco Type-5/export/import/ECMP, двухнодовый полный
+8 VRF/26 L2 OVN+PE dataplane и внешний BGP fault, Kubernetes Services/NetworkPolicy
+E2E, KubeVirt success/cancel/source cleanup с реальным трафиком. Linux FDB movement
+и binding tests не заменяют эти проверки. Полные make ut/build-go не запускались;
+собраны релевантные Linux test binaries и выполнены перечисленные suites.
+
+Не гарантирован bounded withdrawal при смерти/зависании daemon до restart:
+subnet routes сохраняются в kernel. PE unreachable defaults остаются отдельной
+зависимостью OpenPERouter, production Kube-OVN их не устанавливает. Defaults в
+lab — только foreign preservation controls, не обход native reconciler.
+Полная tenant→underlay изоляция и Cisco/KubeVirt readiness не заявляются.
+
+---
+
+Предыдущий per-endpoint netlink runtime удалён. Его исторические логи сохранены
+локально в results/netlink-20261123 и не считаются проверкой текущей архитектуры.
+
+## Исторические результаты прежней BGP-реализации
+
 # Scaling reconciliation: test03/test04, 2026-11-23
 
 Исправление развёрнуто и проверено на настоящем двухнодовом кластере,

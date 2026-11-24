@@ -80,7 +80,7 @@ func testVpc() *kubeovnv1.Vpc {
 	return &kubeovnv1.Vpc{Name: "tenant-a", UID: "vpc-a", Spec: kubeovnv1.VpcSpec{
 		OpenPERouter: &kubeovnv1.OpenPERouterIntegration{
 			Mode: openperouter.Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001,
-			TransitCIDRs: []string{"169.254.32.0/20"}, HostSessionCIDRs: []string{"169.254.16.0/20"}, RouterASN: 64514, HostASN: 64515,
+			TransitCIDRs: []string{"169.254.32.0/20"}, HostSessionCIDRs: []string{"169.254.16.0/20"},
 		},
 	}}
 }

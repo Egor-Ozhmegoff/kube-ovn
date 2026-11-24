@@ -1,5 +1,12 @@
 # Исходные данные двухнодового примера
 
+**Переход на netlink:** примеры теперь требуют native L3 attachment без BGP.
+В закреплённой MAC-ветке такого API нет; удаление `hostSession` само по себе
+не создаёт veth. Это целевая конфигурация после внешней доработки, а не готовый
+bootstrap. `kube-ovn-attachments.yaml` — только метаданные Kube-OVN.
+Читайте [порядок перехода и ограничения](../netlink-routes.md).
+
+
 Это **экспериментальный lab fixture**. Компонентные проверки и оставшиеся
 блокеры описаны в [отчёте](../validation-results.md). Используется
 ветка `Mac_setings_for_l2vni_and_l3vni`, commit
@@ -15,7 +22,6 @@ OpenPERouter; management NIC остаётся в host namespace.
 | --- | --- | --- |
 | node index | 11 | 12 |
 | Underlay ASN / TOR ASN | 64514 / 64512 | 64514 / 64512 |
-| Host speaker ASN | 64515 | 64515 |
 | L3VNI / VRF | 10001 / tenant-a | 10001 / tenant-a |
 | L2VNI | 10101, 10102 | 10101, 10102 |
 | Host L3 attachment | host-e-10001 | host-e-10001 |
@@ -34,10 +40,9 @@ MAC IRB gateway обоих L2 сегментов задан как `02:00:05:00:
 `gatewayMAC`, вместе с соответствующими `gatewayIPs`. Это immutable поля:
 в существующий L2VNI gatewayMAC нельзя добавить или изменить обновлением.
 `hostMaster` и bridge mappings не заполнены: host leg подключает Kube-OVN
-через localport, reflection guard описан в implementation.md. Host L3 BGP
-peer запускает daemon после fresh API/binding проверки.
-Подсети из таблицы не анонсируются из static bootstrap: availability workload
-должен сообщать отдельный agent по свежим bindings.
+через localport, reflection guard описан в implementation.md. PE получает только CIDR Pod-only сетей через локальный L3 attachment.
+L2VNI исключены; endpoint IP и их размещение не являются входами routes.
+Подсети из таблицы не анонсируются из static bootstrap: внешний export routed subnet prefixes выполняет FRR согласно policy.
 
 L2 IRB connected prefixes могут быть экспортированы самим OpenPERouter в
 зависимости от FRR connected/EVPN policy. Это не анонс наличия конкретного
@@ -61,9 +66,8 @@ VM, не запускать на текущем хосте. Здесь deploymen
 Внешний peering задаётся интерфейсом `fabric0` и использует IPv6 link-local.
 Remote Cisco VTEP addresses в этом примере отсутствуют: next-hop обнаруживает
 FRR EVPN. Проверить RFC 5549/extended next-hop и AS_PATH с конкретным Cisco
-образом/версией. Общий host ASN не разрешает без проверки реэкспортировать
-удалённые workload routes обратно host speaker; внутренняя доставка должна
-оставаться в OVN.
+образом/версией. Локальной BGP-сессии Kube-OVN↔PE нет. FRR redistribution требует явного
+фильтра protocol-класса/metric и routed subnet prefixes; внутренняя доставка остаётся в OVN.
 
 ## Экспериментальные workload attachments
 
@@ -178,5 +182,5 @@ neighbors:
     keepaliveTimeSeconds: 3
 ```
 
-Node index, hostSession, VNI и RT/RD должны оставаться согласованными с VPC
+Node index, local attachment pools, VNI и RT/RD должны оставаться согласованными с VPC
 и политикой fabric. Remote VTEP IP в OVN routes/policies не добавляются.

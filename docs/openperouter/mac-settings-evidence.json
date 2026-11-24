@@ -39,7 +39,8 @@
   "limitations": [
     "gatewayMAC requires gatewayIPs and is immutable, including adding/removing the field",
     "routerMAC is node-local static/CLI configuration, kernel datapath only; cross-node uniqueness is not enforced",
-    "routerMAC startup configuration reload and end-to-end FRR RMAC convergence have not been tested"
+    "routerMAC startup configuration reload and end-to-end FRR RMAC convergence have not been tested",
+    "Native Type-2 learning/aging and MAC Mobility need two-PE E2E measurement; no Kube-OVN endpoint lease API is required by the subnet-route design."
   ],
   "capabilities": [
     "L2VNISpec.gatewayMAC applied by owner reconciler before attaching VXLAN",
@@ -48,7 +49,7 @@
   "pendingValidation": [
     "OVN local L3 handoff and return-path loop prevention",
     "OVN internal VXLAN plus EVPN L2 split-horizon, local MAC/IP ownership and BUM deduplication",
-    "Workload availability driven host BGP announcements and migration",
+    "Routed OVN subnet export/import and native Type-2 MAC Mobility, without endpoint IP announcements",
     "Fail-closed tenant VRF FIB and external route withdrawal",
     "Services, NetworkPolicy, MTU, restart and API-outage scenarios"
   ],
@@ -60,10 +61,10 @@
       "minimalChange": "Native owner installs persistent IPv4/IPv6 terminal defaults before opening ingress and reapplies them on recreation."
     },
     {
-      "id": "endpoint-type2-withdraw-lifecycle",
-      "source": "api/v1alpha1/l2vni_types.go:L2VNISpec",
-      "reason": "Segment API provides no endpoint availability lease/delete; prompt Type-2 cleanup on workload delete is not guaranteed by native aging.",
-      "minimalChange": "Validate native mobility/aging timing; if prompt delete is required, add endpoint lifecycle API to the native FDB/FRR owner."
+      "id": "l3-attachment-without-local-bgp",
+      "source": "internal/conversion/host_conversion.go:l3vniToHost; internal/hostnetwork/vni.go:SetupL3VNI",
+      "reason": "Without HostSession the conversion leaves LinkIPs nil, so SetupL3VNI skips the native host veth. Kube-OVN no longer runs a local BGP peer.",
+      "minimalChange": "Provide a native non-BGP L3 attachment lifecycle independently of local BGP neighbor configuration; no proposed API is treated as existing."
     }
   ]
 }

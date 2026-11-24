@@ -7519,14 +7519,11 @@ spec:
                 description: Optional integration with a locally bootstrapped OpenPERouter
                   on each node.
                 properties:
-                  hostASN:
-                    format: int64
-                    maximum: 4294967295
-                    minimum: 1
-                    type: integer
                   hostSessionCIDRs:
-                    description: Must match hostSession.localCIDRs in the native L3VNI
-                      bootstrap.
+                    description: |-
+                      Local host/PE attachment pools for routed OVN subnet return traffic.
+                      The legacy field name does not enable BGP or per-endpoint IP announcements.
+                      Must match kube-ovn-attachments.yaml; native hostSession is incompatible.
                     items:
                       type: string
                     maxItems: 2
@@ -7546,11 +7543,6 @@ spec:
                     enum:
                     - OpenPERouter
                     type: string
-                  routerASN:
-                    format: int64
-                    maximum: 4294967295
-                    minimum: 1
-                    type: integer
                   transitCIDRs:
                     description: Dedicated OVN-to-host transit pools, separate from
                       workload/hostSession pools.

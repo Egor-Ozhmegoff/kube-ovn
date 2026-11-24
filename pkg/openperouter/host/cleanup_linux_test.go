@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +56,7 @@ func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	ctx := t.Context()
 	spec := kernelIntegration("tenant-a", 10001)
 	vpc := &kubeovnv1.Vpc{Name: "vpc", UID: "old-uid", Spec: kubeovnv1.VpcSpec{OpenPERouter: spec}}
-	bootstrap := &openperouter.Bootstrap{Index: 11, L3VNIs: []openperouter.NativeL3VNI{{Name: spec.L3VNIName, VRF: spec.VRF, VNI: spec.L3VNI, HostSession: &openperouter.NativeHostSession{ASN: 64514, HostASN: 64515, LocalCIDRs: spec.HostSessionCIDRs}}}}
+	bootstrap := &openperouter.Bootstrap{Index: 11, Attachments: []openperouter.LocalL3Attachment{{L3VNIName: spec.L3VNIName, LocalCIDRs: spec.HostSessionCIDRs}}, L3VNIs: []openperouter.NativeL3VNI{{Name: spec.L3VNIName, VRF: spec.VRF, VNI: spec.L3VNI}}}
 	node, err := openperouter.BuildNode(vpc.Name, "node-a", bootstrap.Index, spec)
 	require.NoError(t, err)
 	runIP(t, "link", "add", node.HostInterface, "type", "veth", "peer", "name", "native-peer")
@@ -63,12 +64,17 @@ func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	for _, address := range node.HostAddresses {
 		runIP(t, "address", "add", address, "dev", node.HostInterface)
 	}
-	first, err := Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"}, true)
+	first, err := Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"})
 	require.NoError(t, err)
+	require.Zero(t, first.Egress.Attrs().Flags&net.FlagUp, "new egress must remain closed before PE routes/readback")
+	require.NoError(t, first.Open())
+	healthy, err := Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"})
+	require.NoError(t, err)
+	require.NotZero(t, healthy.Egress.Attrs().Flags&net.FlagUp, "healthy no-op reconcile must not flap egress")
 	require.NoError(t, Fence(ctx, provider, string(vpc.UID)))
 	requireOVSOwner(t, provider, first.Node.EgressInterface, "old-uid")
 	requireOVSOwner(t, provider, first.Node.ReturnInterface, "old-uid")
-	_, err = Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"}, true)
+	_, err = Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"})
 	require.NoError(t, err, "Fence must support recovery without losing the owner")
 	broken := &failDeleteProvider{Provider: provider, fail: true}
 	require.ErrorContains(t, Cleanup(ctx, broken, nil, nil), "injected deletion failure")
@@ -85,7 +91,7 @@ func TestCleanupInternalPortsAndRecreateVPC(t *testing.T) {
 	require.NoError(t, err, "native veth must survive Kube-OVN cleanup")
 	runIP(t, "link", "set", node.HostInterface, "up")
 	vpc.UID = "new-uid"
-	_, err = Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"}, true)
+	_, err = Ensure(ctx, provider, vpc, "node-a", bootstrap, 1400, []string{"10.101.3.0/24"})
 	require.NoError(t, err, "same L3VNI can be reused by a new VPC UID")
 	requireOVSOwner(t, provider, node.EgressInterface, "new-uid")
 	requireOVSOwner(t, provider, node.ReturnInterface, "new-uid")
@@ -189,7 +195,7 @@ func TestRebindKeepsTerminalDropOnPartialFailure(t *testing.T) {
 }
 
 func kernelIntegration(vrf string, vni int32) *kubeovnv1.OpenPERouterIntegration {
-	return &kubeovnv1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: vrf, L3VNIName: vrf, L3VNI: vni, TransitCIDRs: []string{"169.254.32.0/20"}, HostSessionCIDRs: []string{"169.254.16.0/20"}, RouterASN: 64514, HostASN: 64515}
+	return &kubeovnv1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: vrf, L3VNIName: vrf, L3VNI: vni, TransitCIDRs: []string{"169.254.32.0/20"}, HostSessionCIDRs: []string{"169.254.16.0/20"}}
 }
 
 func l2Bootstrap(vpc *kubeovnv1.Vpc) *openperouter.Bootstrap {

@@ -73,7 +73,7 @@ func run() error {
 		return host.EnsureReflection(context.Background(), os.Args[2], os.Args[3], os.Args[4:])
 	}
 
-	spec := &v1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001, TransitCIDRs: []string{"169.254.32.0/20", "fd00:32::/64"}, HostSessionCIDRs: []string{"169.254.16.0/20", "fd00:16::/64"}, RouterASN: 64514, HostASN: 64515}
+	spec := &v1.OpenPERouterIntegration{Mode: openperouter.Mode, VRF: "tenant-a", L3VNIName: "tenant-a", L3VNI: 10001, TransitCIDRs: []string{"169.254.32.0/20", "fd00:32::/64"}, HostSessionCIDRs: []string{"169.254.16.0/20", "fd00:16::/64"}}
 	vpc := &v1.Vpc{Name: "tenant-a", UID: "disposable-vpc-a", Spec: v1.VpcSpec{OpenPERouter: spec}}
 	transit, err := openperouter.BuildTransit(vpc.Name, spec)
 	if err != nil {

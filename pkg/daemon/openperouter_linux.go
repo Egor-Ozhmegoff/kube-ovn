@@ -4,38 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	uuidpkg "github.com/google/uuid"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	kubeovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
 	"github.com/kubeovn/kube-ovn/pkg/openperouter"
-	"github.com/kubeovn/kube-ovn/pkg/openperouter/advertiser"
 	ophost "github.com/kubeovn/kube-ovn/pkg/openperouter/host"
+	"github.com/kubeovn/kube-ovn/pkg/openperouter/routes"
 	"github.com/kubeovn/kube-ovn/pkg/ovs"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/ovnsb"
 	"github.com/kubeovn/kube-ovn/pkg/ovsdb/vswitch"
 	"github.com/kubeovn/kube-ovn/pkg/util"
 )
-
-type openPERouterRuntime struct {
-	attachment    *ophost.Attachment
-	speaker       *advertiser.Speaker
-	lease         advertiser.Lease
-	uid           string
-	configuration string
-}
 
 func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 	for {
@@ -56,10 +44,17 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 		}
 	}
 
-	// Fence persisted attachments before trusting any API/configuration cache.
+	// Fence and withdraw persisted state before trusting any API/configuration cache.
+	manager := routes.Manager{Namespace: c.config.OpenPERouterNamespace}
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := ophost.Fence(ctx, c.vswitchTables, "")
+		if err == nil {
+			err = manager.Sweep(ctx, nil)
+		}
+		if err == nil {
+			err = manager.PurgeLegacy(ctx)
+		}
 		cancel()
 		if err == nil {
 			break
@@ -74,7 +69,6 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 	if !cache.WaitForCacheSync(stop, c.openPERouterVpcsSynced) {
 		return
 	}
-	active := make(map[string]*openPERouterRuntime)
 	guards := &openPERouterGuards{session: uuidpkg.NewString(), joined: make(map[types.UID]guardRegistration)}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -83,10 +77,10 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 		} else if err := guards.close(ctx); err != nil {
 			klog.ErrorS(err, "Acknowledge closed guards on shutdown")
 		}
-		cancel()
-		for _, state := range active {
-			state.speaker.Close()
+		if err := manager.Sweep(ctx, nil); err != nil {
+			klog.ErrorS(err, "Withdraw PE subnet routes on shutdown")
 		}
+		cancel()
 	}()
 	var bindings *ovs.LocalBindingClient
 	defer func() {
@@ -100,7 +94,7 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		ctx, timing := openperouter.WithReconcileTiming(ctx)
 		started := time.Now()
-		err := c.syncOpenPERouter(ctx, active, &bindings, guards)
+		err := c.syncOpenPERouter(ctx, manager, &bindings, guards)
 		klog.InfoS("OpenPERouter reconciliation timing", "duration", time.Since(started), "stages", timing.Snapshot(), "error", err)
 		cancel()
 		if err != nil {
@@ -111,12 +105,10 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 			} else if err := guards.close(fenceCtx); err != nil {
 				klog.ErrorS(err, "Acknowledge closed OpenPERouter guards")
 			}
-			fenceCancel()
-			for _, state := range active {
-				if err := state.speaker.Sync(nil); err != nil {
-					klog.ErrorS(err, "Withdraw OpenPERouter workload routes")
-				}
+			if err := manager.Sweep(fenceCtx, nil); err != nil {
+				klog.ErrorS(err, "Withdraw PE subnet routes")
 			}
+			fenceCancel()
 		}
 		select {
 		case <-stop:
@@ -126,189 +118,150 @@ func (c *Controller) runOpenPERouter(stop <-chan struct{}) {
 	}
 }
 
-func (c *Controller) syncOpenPERouter(ctx context.Context, active map[string]*openPERouterRuntime, reader **ovs.LocalBindingClient, guards *openPERouterGuards) error {
+func (c *Controller) syncOpenPERouter(ctx context.Context, manager routes.Manager, reader **ovs.LocalBindingClient, guards *openPERouterGuards) error {
 	if c.config.NetworkType != util.NetworkTypeVxlan {
 		return errors.New("OpenPERouter integration requires internal OVN VXLAN")
 	}
-	vpcs, err := c.openPERouterVpcs.List(labels.Everything())
+	vpcList, err := c.config.KubeOvnClient.KubeovnV1().Vpcs().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
-	subnets, err := c.subnetsLister.List(labels.Everything())
+	subnetList, err := c.config.KubeOvnClient.KubeovnV1().Subnets().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
+	var vpcs []*kubeovnv1.Vpc
+	var subnets []*kubeovnv1.Subnet
+	var keep []string
 	liveVpcs, liveSubnets := make(map[string]bool), make(map[string]bool)
-	for _, vpc := range vpcs {
-		if vpc.Spec.OpenPERouter != nil {
+	for i := range vpcList.Items {
+		vpc := &vpcList.Items[i]
+		if vpc.Spec.OpenPERouter != nil && vpc.DeletionTimestamp.IsZero() {
+			vpcs = append(vpcs, vpc)
 			liveVpcs[string(vpc.UID)] = true
+			keep = append(keep, string(vpc.UID))
 		}
 	}
-	for _, subnet := range subnets {
-		if subnet.Spec.OpenPERouterL2 != nil {
+	var guardNames []string
+	for i := range subnetList.Items {
+		subnet := &subnetList.Items[i]
+		subnets = append(subnets, subnet)
+		if subnet.Spec.OpenPERouterL2 != nil && subnet.DeletionTimestamp.IsZero() && liveVpcName(vpcs, subnet.Spec.Vpc) {
 			liveSubnets[string(subnet.UID)] = true
+			guardNames = append(guardNames, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
 		}
 	}
-	for name, state := range active {
-		if !liveVpcs[state.uid] {
-			state.speaker.Close()
-			delete(active, name)
-		}
+	if err := manager.Sweep(ctx, keep); err != nil {
+		return err
 	}
 	if err := ophost.Cleanup(ctx, c.vswitchTables, liveVpcs, liveSubnets); err != nil {
 		return err
 	}
-	if len(liveVpcs) == 0 {
+	if err := guards.forgetRemoved(ctx, liveSubnets); err != nil {
+		// Cleanup already proved these removed paths closed. Retain failed
+		// registrations for retry without disrupting live VPCs.
+		klog.ErrorS(err, "Retry Closed acknowledgement for removed OpenPERouter paths")
+	}
+	if len(vpcs) == 0 {
 		return nil
 	}
-	if err := c.registerOpenPERouterGuards(ctx, guards, subnets); err != nil {
+	if err := c.prepareOpenPERouterGuards(ctx, guards); err != nil {
 		return err
 	}
-	bootstrap, err := openperouter.ReadBootstrap(c.config.OpenPERouterBootstrap)
+	bootstrap, err := c.readOpenPERouterBootstrap(ctx)
 	if err != nil {
 		return err
-	}
-	node, err := c.nodesLister.Get(c.config.NodeName)
-	if err != nil {
-		return err
-	}
-	index, err := strconv.Atoi(node.Annotations[openperouter.NodeIndexAnnotation])
-	if err != nil || index != bootstrap.Index {
-		return errors.New("node annotation and local OpenPERouter bootstrap index disagree")
-	}
-	if !strings.EqualFold(node.Annotations[openperouter.NodeRouterMACAnnotation], bootstrap.RouterMAC) {
-		return errors.New("node router MAC annotation disagrees with local OpenPERouter bootstrap")
-	}
-	// Validate the complete native contract before opening either L2 or L3.
-	for _, vpc := range vpcs {
-		if vpc.Spec.OpenPERouter == nil {
-			continue
-		}
-		if err := bootstrap.Validate(vpc.Spec.OpenPERouter); err != nil {
-			return err
-		}
-		for _, subnet := range subnets {
-			if subnet.Spec.Vpc == vpc.Name && subnet.Spec.OpenPERouterL2 != nil {
-				if err := bootstrap.ValidateL2(vpc.Spec.OpenPERouter, subnet); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	var guardNames []string
-	for _, subnet := range subnets {
-		if subnet.Spec.OpenPERouterL2 != nil {
-			guardNames = append(guardNames, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
-		}
 	}
 	slices.Sort(guardNames)
 	bound, interfaces, err := c.openPERouterBindings(ctx, reader, guardNames...)
 	if err != nil {
 		return err
 	}
-	// A direct local-pod snapshot is the availability lease. Informer/config
-	// caches alone must not renew announcements across an API outage or reboot.
-	podSnapshotDone := openperouter.Measure(ctx, "api.pods")
-	pods, podErr := c.config.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", c.config.NodeName).String()})
-	podSnapshotDone()
-	if podErr != nil {
-		klog.ErrorS(podErr, "Fresh local Pod snapshot unavailable; withdrawing OpenPERouter workload routes")
-	}
-	now := time.Now()
-	keep := make(map[string]bool)
+	return reconcileOpenPERouterVPCs(ctx, vpcs, func(vpc *kubeovnv1.Vpc) error {
+		return c.syncOpenPERouterVPC(ctx, manager, vpc, subnets, bootstrap, guards, *reader, bound, interfaces)
+	}, func(closeCtx context.Context, uid string) error {
+		return c.closeOpenPERouterVPC(closeCtx, uid, guards, manager)
+	})
+}
+
+func liveVpcName(vpcs []*kubeovnv1.Vpc, name string) bool {
+	return slices.ContainsFunc(vpcs, func(vpc *kubeovnv1.Vpc) bool { return vpc.Name == name })
+}
+
+// A VPC-local failure must not become the global fencing trigger. Closure gets
+// its own budget so a failed preparation still attempts fencing and withdrawal.
+func reconcileOpenPERouterVPCs(ctx context.Context, vpcs []*kubeovnv1.Vpc, syncVpc func(*kubeovnv1.Vpc) error, closeVpc func(context.Context, string) error) error {
 	for _, vpc := range vpcs {
-		if vpc.Spec.OpenPERouter == nil || !vpc.DeletionTimestamp.IsZero() {
-			continue
-		}
-		keep[vpc.Name] = true
-		state := active[vpc.Name]
-		if state != nil && state.uid != string(vpc.UID) {
-			state.speaker.Close()
-			delete(active, vpc.Name)
-			state = nil
-		}
-		var cidrs []string
-		for _, subnet := range subnets {
-			if subnet.Spec.Vpc == vpc.Name {
-				cidrs = append(cidrs, strings.Split(subnet.Spec.CIDRBlock, ",")...)
-			}
-		}
-		peReady := false
-		if state != nil {
-			var err error
-			peReady, err = state.speaker.Ready(ctx)
-			if err != nil {
-				return err
-			}
-		}
-		attachment, err := ophost.Ensure(ctx, c.vswitchTables, vpc, c.config.NodeName, bootstrap, c.config.MTU, cidrs, peReady)
-		if err != nil {
-			if state != nil {
-				if withdrawErr := state.speaker.Sync(nil); withdrawErr != nil {
-					return withdrawErr
-				}
-			}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		configuration := fmt.Sprintf("%s/%d/%d/%d/%d/%s", vpc.Spec.OpenPERouter.VRF, vpc.Spec.OpenPERouter.HostASN,
-			vpc.Spec.OpenPERouter.RouterASN, attachment.VRF.Index, attachment.Peer.Attrs().Index, strings.Join(attachment.Node.HostAddresses, ","))
-		if state != nil && state.configuration != configuration {
-			state.speaker.Close()
-			if err := ophost.Fence(ctx, c.vswitchTables, string(vpc.UID)); err != nil {
-				return err
+		if err := syncVpc(vpc); err != nil {
+			klog.ErrorS(err, "Reconcile OpenPERouter VPC; close only its local paths", "vpc", vpc.Name)
+			closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := closeVpc(closeCtx, string(vpc.UID)); err != nil {
+				klog.ErrorS(err, "Close OpenPERouter VPC paths/guards/routes", "vpc", vpc.Name)
 			}
-			if err := guards.close(ctx, string(vpc.UID)); err != nil {
-				return err
-			}
-			delete(active, vpc.Name)
-			state = nil
+			cancel()
 		}
-		if _, ready := bound[attachment.Node.ReturnPort]; !ready {
-			if state != nil {
-				if err := state.speaker.Sync(nil); err != nil {
-					return err
-				}
-			}
+	}
+	return ctx.Err()
+}
+
+func (c *Controller) closeOpenPERouterVPC(ctx context.Context, uid string, guards *openPERouterGuards, manager routes.Manager) error {
+	fenceErr := ophost.Fence(ctx, c.vswitchTables, uid)
+	var guardErr error
+	if fenceErr == nil {
+		guardErr = guards.close(ctx, uid)
+	}
+	// Always attempt route withdrawal, even if fencing or guard API failed.
+	return errors.Join(fenceErr, guardErr, manager.Withdraw(ctx, uid))
+}
+
+func (c *Controller) syncOpenPERouterVPC(ctx context.Context, manager routes.Manager, vpc *kubeovnv1.Vpc, subnets []*kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, reader *ovs.LocalBindingClient, bound map[string]ovnsb.PortBinding, installed map[string]bool) error {
+	if err := c.registerOpenPERouterGuards(ctx, guards, vpc, subnets); err != nil {
+		return err
+	}
+	if err := bootstrap.Validate(vpc.Spec.OpenPERouter); err != nil {
+		return err
+	}
+	var cidrs []string
+	for _, subnet := range subnets {
+		if subnet.Spec.Vpc != vpc.Name || !subnet.DeletionTimestamp.IsZero() || !subnet.Status.IsReady() || !util.IsOvnProvider(subnet.Spec.Provider) {
 			continue
 		}
-		if state == nil {
-			var sessions []advertiser.Session
-			for i, peer := range attachment.Node.PeerAddresses {
-				sessions = append(sessions, advertiser.Session{Local: netip.MustParsePrefix(attachment.Node.HostAddresses[i]).Addr(), Peer: netip.MustParseAddr(peer)})
-			}
-			routerID := c.config.NodeIPv4
-			if routerID == "" {
-				routerID = fmt.Sprintf("10.255.%d.%d", bootstrap.Index/256, bootstrap.Index%256)
-			}
-			speaker, err := advertiser.New(ctx, vpc.Spec.OpenPERouter.VRF, vpc.Spec.OpenPERouter.HostASN, vpc.Spec.OpenPERouter.RouterASN, routerID, sessions)
-			if err != nil {
-				return err
-			}
-			state = &openPERouterRuntime{speaker: speaker, uid: string(vpc.UID), configuration: configuration}
-			active[vpc.Name] = state
-		}
-		state.attachment = attachment
-		peReady, err = state.speaker.Ready(ctx)
-		if err != nil {
+		if err := bootstrap.ValidateL2(vpc.Spec.OpenPERouter, subnet); err != nil {
 			return err
 		}
-		if !peReady {
-			if err := ophost.Fence(ctx, c.vswitchTables, string(vpc.UID)); err != nil {
-				return err
-			}
-			if err := guards.close(ctx, string(vpc.UID)); err != nil {
-				return err
-			}
-			if err := state.speaker.Sync(nil); err != nil {
-				return err
-			}
-			continue
+		cidrs = append(cidrs, strings.Split(subnet.Spec.CIDRBlock, ",")...)
+	}
+	prefixes, err := routes.RoutedSubnetPrefixes(vpc, subnets)
+	if err != nil {
+		return err
+	}
+	attachment, err := ophost.Ensure(ctx, c.vswitchTables, vpc, c.config.NodeName, bootstrap, c.config.MTU, cidrs)
+	if err != nil {
+		return err
+	}
+	if err := openPERouterReturnReady(attachment.Node.ReturnPort, bound, installed); err != nil {
+		return err
+	}
+	config := routes.Attachment{
+		UID: string(vpc.UID), VRF: vpc.Spec.OpenPERouter.VRF,
+		Device: fmt.Sprintf("pe-e-%d", vpc.Spec.OpenPERouter.L3VNI), HostIndex: attachment.Peer.Attrs().Index,
+		HostAddresses: attachment.Node.HostAddresses, PeerAddresses: attachment.Node.PeerAddresses, Prefixes: prefixes,
+	}
+	return manager.Reconcile(ctx, config, func(session *routes.Session) error {
+		if err := session.Check(ctx, string(vpc.UID)); err != nil {
+			return err
+		}
+		if err := attachment.Open(); err != nil {
+			return err
 		}
 		for _, subnet := range subnets {
-			if subnet.Spec.Vpc != vpc.Name || subnet.Spec.OpenPERouterL2 == nil || !subnet.Status.IsReady() {
+			if subnet.Spec.Vpc != vpc.Name || subnet.Spec.OpenPERouterL2 == nil || !subnet.DeletionTimestamp.IsZero() || !subnet.Status.IsReady() {
 				continue
 			}
-			macs, err := (*reader).ReflectionMACs(ctx, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
+			macs, err := reader.ReflectionMACs(ctx, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
 			if err != nil {
 				return err
 			}
@@ -316,23 +269,27 @@ func (c *Controller) syncOpenPERouter(ctx context.Context, active map[string]*op
 				return err
 			}
 		}
-		if podErr == nil {
-			state.lease.Refresh(now, localOpenPERouterPrefixes(pods.Items, subnets, vpc.Name, bound, interfaces))
-		}
-		// Withdraw on API loss as well as missing local active bindings.
-		// A VRF/configuration cache must never renew workload availability.
-		desired := state.lease.Desired(now, 30*time.Second, podErr == nil)
-		if err := state.speaker.Sync(desired); err != nil {
-			return err
-		}
+		return nil
+	})
+}
+
+func (c *Controller) readOpenPERouterBootstrap(ctx context.Context) (*openperouter.Bootstrap, error) {
+	bootstrap, err := openperouter.ReadBootstrap(c.config.OpenPERouterBootstrap)
+	if err != nil {
+		return nil, err
 	}
-	for name, state := range active {
-		if !keep[name] {
-			state.speaker.Close()
-			delete(active, name)
-		}
+	node, err := c.config.KubeClient.CoreV1().Nodes().Get(ctx, c.config.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	index, err := strconv.Atoi(node.Annotations[openperouter.NodeIndexAnnotation])
+	if err != nil || index != bootstrap.Index {
+		return nil, errors.New("node annotation and local OpenPERouter bootstrap index disagree")
+	}
+	if !strings.EqualFold(node.Annotations[openperouter.NodeRouterMACAnnotation], bootstrap.RouterMAC) {
+		return nil, errors.New("node router MAC annotation disagrees with local OpenPERouter bootstrap")
+	}
+	return bootstrap, nil
 }
 
 func (c *Controller) openPERouterBindings(ctx context.Context, reader **ovs.LocalBindingClient, guardNames ...string) (map[string]ovnsb.PortBinding, map[string]bool, error) {
@@ -381,67 +338,9 @@ func (c *Controller) openPERouterBindings(ctx context.Context, reader **ovs.Loca
 	return bound, installed, nil
 }
 
-func localOpenPERouterPrefixes(pods []corev1.Pod, subnets []*kubeovnv1.Subnet, vpc string, bound map[string]ovnsb.PortBinding, installed map[string]bool) map[netip.Prefix]struct{} {
-	byName := make(map[string]*kubeovnv1.Subnet)
-	for _, subnet := range subnets {
-		if subnet.Spec.Vpc == vpc && subnet.Status.IsReady() && !subnet.Spec.NatOutgoing {
-			byName[subnet.Name] = subnet
-		}
+func openPERouterReturnReady(port string, bound map[string]ovnsb.PortBinding, installed map[string]bool) error {
+	if _, ready := bound[port]; !ready || !installed[port] {
+		return fmt.Errorf("local OVN return port %s is not bound and installed", port)
 	}
-	prefixes := make(map[netip.Prefix]struct{})
-	for _, pod := range pods {
-		if pod.Spec.HostNetwork || (pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending) || !pod.DeletionTimestamp.IsZero() {
-			continue
-		}
-		for annotation, value := range pod.Annotations {
-			provider, ok := strings.CutSuffix(annotation, ".kubernetes.io/ip_address")
-			if !ok || provider == "" || pod.Annotations[provider+".kubernetes.io/allocated"] != "true" {
-				continue
-			}
-			subnet := byName[pod.Annotations[provider+".kubernetes.io/logical_switch"]]
-			if subnet == nil {
-				continue
-			}
-			candidates := []string{ovs.PodNameToPortName(pod.Name, pod.Namespace, provider)}
-			for _, owner := range pod.OwnerReferences {
-				if owner.Kind == util.KindVirtualMachineInstance && strings.HasPrefix(owner.APIVersion, "kubevirt.io/") {
-					candidates = append(candidates, ovs.PodNameToPortName(owner.Name, pod.Namespace, provider))
-				}
-			}
-			for _, port := range candidates {
-				binding, exists := bound[port]
-				if !exists || !installed[port] {
-					continue
-				}
-				for ip := range strings.SplitSeq(value, ",") {
-					addr, err := netip.ParseAddr(strings.TrimSpace(ip))
-					if err != nil || !bindingHasAddress(binding, addr) || !subnetHasAddress(subnet.Spec.CIDRBlock, addr) {
-						continue
-					}
-					prefixes[netip.PrefixFrom(addr, addr.BitLen())] = struct{}{}
-				}
-			}
-		}
-	}
-	return prefixes
-}
-
-func bindingHasAddress(binding ovnsb.PortBinding, address netip.Addr) bool {
-	for _, entry := range binding.MAC {
-		for field := range strings.FieldsSeq(entry) {
-			if ip, err := netip.ParseAddr(field); err == nil && ip == address {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func subnetHasAddress(cidrs string, address netip.Addr) bool {
-	for cidr := range strings.SplitSeq(cidrs, ",") {
-		if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Contains(address) {
-			return true
-		}
-	}
-	return false
+	return nil
 }

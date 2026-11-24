@@ -1,3 +1,8 @@
+> Историческое исследование BGP runtime на базе 4601dcca47fb.
+> В текущей доработке GoBGP/lease заменены netlink PE routes:
+> [контракт](netlink-routes.md), [новые результаты](validation-results.md).
+> Deployment и измерения этого документа не повторялись для новой реализации.
+
 # Reconciliation scaling: 8 VRF / 26 L2
 
 База Kube-OVN: `openperouter@4601dcca47fb3a7a4e7f904a616fc9f7dd1cd1f9`

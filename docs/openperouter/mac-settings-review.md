@@ -56,7 +56,9 @@ systemd bootstrap читает node-local configuration до Kubernetes API.
 
 * Наличие MAC настроек не создаёт management LSP/host VRF и локальный egress
   для Kube-OVN shared distributed router.
-* OpenPERouter не получает OVN workload prefixes без отдельного host speaker.
+* OpenPERouter сам не получает OVN workload prefixes. Kube-OVN пишет routed subnet routes (без L2VNI и per-endpoint routes),
+  но для запуска нужен отсутствующий независимый от hostSession L3 attachment API
+  (см. [netlink-routes.md](netlink-routes.md)).
 * Не найден готовый контракт local MAC/IP ownership и split-horizon между
   внутренним OVN VXLAN и внешним EVPN. Наивное подключение localnet на всех
   нодах остаётся непроверенным и потенциально создаёт двойной BUM путь.
@@ -90,6 +92,6 @@ allow. Текущая доработка ставит nft netdev ingress filter 
 новые packet/kernel результаты — в validation-results.md.
 Реальная host-VRF GoBGP↔FRR 10.6.0 session проходит анонс, отзыв и restart.
 MAC-настройки не закрывают ND split-horizon, native fail-closed lifecycle и
-Type-2 cleanup. Актуальные результаты и границы проверок — в
+native non-BGP L3 attachment; Type-2 aging/mobility остаются предметом E2E проверки. Актуальные результаты и границы проверок — в
 [отчёте](validation-results.md), минимальные изменения — в
 [implementation.md](implementation.md#блокеры-и-неподтверждённые-свойства).

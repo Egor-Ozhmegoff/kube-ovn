@@ -19,18 +19,12 @@ type OpenPERouterIntegration struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=2
 	TransitCIDRs []string `json:"transitCIDRs"`
-	// Must match hostSession.localCIDRs in the native L3VNI bootstrap.
+	// Local host/PE attachment pools for routed OVN subnet return traffic.
+	// The legacy field name does not enable BGP or per-endpoint IP announcements.
+	// Must match kube-ovn-attachments.yaml; native hostSession is incompatible.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=2
 	HostSessionCIDRs []string `json:"hostSessionCIDRs"`
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=4294967295
-	// +kubebuilder:validation:Format=int64
-	RouterASN uint32 `json:"routerASN"`
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=4294967295
-	// +kubebuilder:validation:Format=int64
-	HostASN uint32 `json:"hostASN"`
 }
 
 // OpenPERouterL2Attachment attaches an OVN switch to a native L2VNI using a
