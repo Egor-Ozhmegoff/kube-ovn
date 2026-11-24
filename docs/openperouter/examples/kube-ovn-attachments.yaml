@@ -1,0 +1,6 @@
+# Kube-OVN-local metadata, NOT native OpenPERouter API.
+version: netlink-v1
+l3Attachments:
+  - l3VNIName: tenant-a
+    localCIDRs:
+      - 169.254.16.0/20
