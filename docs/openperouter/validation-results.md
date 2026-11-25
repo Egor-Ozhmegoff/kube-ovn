@@ -3,8 +3,11 @@
 База: `openperouter@674bc608b4725898385aa63269d86d227944bc9c`. Перед началом
 index и tracked дерево были чистыми; существовал untracked
 `reconcile-timeouts.md`. Этот файл сохранён и дополнен правилами классификации;
-он входит в текущий набор новых файлов, staging не выполнялся. Исторические
-результаты ниже не являются результатами этой версии.
+при повторном запуске исправления уже находились в HEAD
+`9d115e3d9cf3cf1353520fadf16bcae10dfc6f83`, дерево/index были чистыми,
+а документ отслеживался Git. Финальная проверка ниже относится к этому HEAD
+плюс текущие исправления monitor/fixture. Staging/commit/push агент не выполнял.
+Исторические результаты других этапов ниже не относятся к этой версии.
 
 ## Изменения
 
@@ -24,6 +27,10 @@ index и tracked дерево были чистыми; существовал un
 - Shared read timeout/cancellation проходит независимый common probe даже до
   исчерпания всего VPC budget. При успешном probe закрывается только VPC,
   подтверждённая общая ошибка по-прежнему запускает общий Fence/Sweep.
+- Финальный Linux-прогон выявил ошибку настройки нескольких AddressSet monitors:
+  initial cache population дублировала строки. Теперь весь набор имён объединён
+  OR-условиями в одном `monitor_cond`, PortBinding также явно использует
+  `monitor_cond`. Отдельные monitors одной таблицы больше не создаются.
 - Scoped budgets, pending closure retries, final cleanup context, barrier,
   reflection/ND, subnet routes и отсутствие локального BGP сохранены.
 
@@ -39,8 +46,9 @@ read call sites, их regression tests и documentation. API/CRD/charts не м�
 | Полный `make lint` | PASS: gen-crd/verify-crd, golangci-lint 2.15.0 (0 issues), modernize; Linux target, Go 1.27.4, host-native generators; без обхода verify-crd |
 | Linux daemon test compilation | PASS для linux/amd64; включает новые fixtures/tests, это не выполнение тестов |
 | Portable OpenPERouter race suites | PASS `go test -race ./pkg/openperouter/... -count=1` на macOS; Linux-only daemon/host tests этим не покрываются |
-| Новые SB classification regressions и прежние daemon timeout/snapshot/isolation | BLOCKED: запуск на 10.64.244.143 не состоялся из-за SSH `Permission denied (publickey,password)` для прежней учётной записи и ключей агента; локальный Docker engine также недоступен |
-| Новый AddressSet kernel component | Добавлен сценарий реальных SB reads + production Fence/Closed/Withdraw с проверкой links/routes/guards A; НЕ ВЫПОЛНЕН по той же причине |
+| Linux daemon regression/race | **PASS** `go test -race ./pkg/daemon -run OpenPERouter -count=10`: новые SB classification и прежние timeout/snapshot/isolation tests, network-none disposable container на **10.64.244.143**. Opt-in kernel test выполнен отдельно |
+| AddressSet kernel component | **PASS 5/5** `go test -race ./pkg/daemon -run "^TestOpenPERouterScopedFailureLinux$" -count=5 -v`, отдельный privileged network-none container: реальные SB reads, production Fence/Closed/Withdraw, links/routes/guards A сохранены. Только OVS rows stubbed |
+| Связанные Linux race suites | **PASS** выбранные ovs appctl/RARP tests ×5; полный `pkg/ovsdb/client` ×1; `pkg/openperouter/...` ×1. Остальные opt-in kernel/packet tests не включались |
 | Полный make ut / E2E / Cisco/KubeVirt / packet tests | Не запускались |
 | gofmt / git diff --check / git diff --cached --check | PASS; index не изменён |
 
@@ -51,11 +59,27 @@ add/remove B между snapshot/Open A, старый reader закрыт/нов
 AddressSet и восстановление строки, реальная смена соединения/Chassis, disconnect,
 Chassis ErrNotFound, read timeout до и на границе VPC budget. Kernel fixture
 дополнена реальным отсутствующим AddressSet с проверкой сохранения A.
-Содержание тестов описывает предназначенное покрытие, **не успешный прогон**.
+Все перечисленные новые SB scenarios выполнены в финальном Linux daemon
+race-прогоне. Сообщения о missing AddressSet/timeout в component-log ожидаемы:
+они вызваны проверяемой неисправностью/injection, а не падением теста.
+
+Первоначальная блокировка SSH устранена после подтверждения credentials
+пользователем. Прежний `/tmp` toolchain/cache отсутствовал; Go 1.27.4 восстановлен
+с проверкой официального SHA256 в отдельном `/var/tmp` task directory. Module
+prefetch выполнен отдельным контейнером; сами тесты выполнялись с `--network none`,
+`GOPROXY=off` и исходниками read-only. Host network namespace не изменялся;
+существующие cluster/fabric containers не использовались для mutations.
+
+Первые прогоны **не прошли**: fixture передавала Encap/Chassis разных таблиц
+одному Create, затем обнаружилось отсутствие служебной `_Server` schema.
+Исправлены fixture и import/formatting. После этого выявлен и исправлен
+production multiple AddressSet monitor cache error. Эти логи сохранены отдельно
+от успешных `final-race.log` и `final-component.log`.
 
 Локальные логи/manifest: `results/failure-classification-20261125/` под существующим
-gitignore. Разрешённый Go-only payload передан в lab до отказа последующего SSH;
-это не выполнение тестов. Вопрос о рабочей учётной записи отправлен пользователю.
+gitignore. SHA256 исходного разрешённого payload и двух обновлённых Go-файлов
+подтверждён на lab; остальные Go-файлы совпадают с исходным payload.
+Тестовые контейнеры удалены через `--rm`; build cache и логи оставлены для повторов.
 Commit/push, изменения живого кластера, OpenPERouter и deployment automation
 не выполнялись. Проверки источников не являются атомарной транзакцией между
 API/SB/OVS/Linux; новое изменение после последнего live check остаётся возможным.

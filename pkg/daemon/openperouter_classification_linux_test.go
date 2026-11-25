@@ -12,6 +12,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/database/inmemory"
 	"github.com/ovn-kubernetes/libovsdb/model"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb/serverdb"
 	"github.com/ovn-kubernetes/libovsdb/server"
 	"github.com/stretchr/testify/require"
 
@@ -32,9 +33,14 @@ func newReflectionSBFixture(t *testing.T) *reflectionSBFixture {
 	require.NoError(t, err)
 	dm, errs := model.NewDatabaseModel(ovnsb.Schema(), cm)
 	require.Empty(t, errs)
+	serverModel, err := serverdb.FullDatabaseModel()
+	require.NoError(t, err)
+	serverSchema := serverdb.Schema()
+	serverDB, errs := model.NewDatabaseModel(serverSchema, serverModel)
+	require.Empty(t, errs)
 	logger := logr.Discard()
-	memory := inmemory.NewDatabase(map[string]model.ClientDBModel{ovnsb.DatabaseName: cm}, &logger)
-	srv, err := server.NewOvsdbServer(memory, &logger, dm)
+	memory := inmemory.NewDatabase(map[string]model.ClientDBModel{ovnsb.DatabaseName: cm, serverSchema.Name: serverModel}, &logger)
+	srv, err := server.NewOvsdbServer(memory, &logger, dm, serverDB)
 	require.NoError(t, err)
 	dir, err := os.MkdirTemp("/tmp", "opclass-")
 	require.NoError(t, err)
@@ -51,7 +57,12 @@ func newReflectionSBFixture(t *testing.T) *reflectionSBFixture {
 	_, err = raw.MonitorAll(t.Context())
 	require.NoError(t, err)
 	db := table.NewDatabase(table.Wrap(raw), time.Second, table.RetryPolicy{})
-	require.NoError(t, db.CreateAndTransact(t.Context(), "fixture", &ovnsb.Encap{UUID: "encap", Type: "vxlan", IP: "192.0.2.1"}, &ovnsb.Chassis{Name: "node", Encaps: []string{"encap"}}))
+	encapOps, err := db.Create(&ovnsb.Encap{UUID: "encap", Type: "vxlan", IP: "192.0.2.1"})
+	require.NoError(t, err)
+	chassisOps, err := db.Create(&ovnsb.Chassis{Name: "node", Encaps: []string{"encap"}})
+	require.NoError(t, err)
+	_, err = db.TransactResults(t.Context(), append(encapOps, chassisOps...)...)
+	require.NoError(t, err)
 	return &reflectionSBFixture{endpoint: endpoint, writer: db}
 }
 

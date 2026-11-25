@@ -61,13 +61,19 @@ func NewLocalBindingClient(ctx context.Context, endpoint, chassisName string, ad
 	monitor := db.NewMonitor(table.WithConditionalTable(port, model.Condition{
 		Field: &port.Chassis, Function: ovsdb.ConditionEqual, Value: &chassis.UUID,
 	}, model.Condition{Field: &port.AdditionalChassis, Function: ovsdb.ConditionIncludes, Value: []string{chassis.UUID}}))
+	monitor.Method = ovsdb.ConditionalMonitorRPC
 	if _, err := db.Monitor(ctx, monitor); err != nil {
 		db.Close()
 		return nil, err
 	}
-	for _, name := range addressSets {
+	if len(addressSets) != 0 {
 		set := &ovnsb.AddressSet{}
-		monitor := db.NewMonitor(table.WithConditionalTable(set, model.Condition{Field: &set.Name, Function: ovsdb.ConditionEqual, Value: name}))
+		conditions := make([]model.Condition, 0, len(addressSets))
+		for _, name := range addressSets {
+			conditions = append(conditions, model.Condition{Field: &set.Name, Function: ovsdb.ConditionEqual, Value: name})
+		}
+		monitor := db.NewMonitor(table.WithConditionalTable(set, conditions...))
+		monitor.Method = ovsdb.ConditionalMonitorRPC
 		if _, err := db.Monitor(ctx, monitor); err != nil {
 			db.Close()
 			return nil, err
