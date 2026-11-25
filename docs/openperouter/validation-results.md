@@ -1,3 +1,69 @@
+# Классификация SB/reflection отказов: 2026-11-25
+
+База: `openperouter@674bc608b4725898385aa63269d86d227944bc9c`. Перед началом
+index и tracked дерево были чистыми; существовал untracked
+`reconcile-timeouts.md`. Этот файл сохранён и дополнен правилами классификации;
+он входит в текущий набор новых файлов, staging не выполнялся. Исторические
+результаты ниже не являются результатами этой версии.
+
+## Изменения
+
+- `LocalBindingGeneration` содержит endpoint, имя/UUID Chassis и поколение
+  соединения, а не адрес Go reader. Плановая смена guardNames создаёт новый
+  monitor до закрытия старого и сохраняет поколение только после проверки
+  живости старого соединения до/после создания нового и совпадения источника.
+- Snapshot больше не хранит указатель reader. После успешной проверки текущего
+  VPC перед L3 Open принимаются свежие snapshot/guardNames. Чтение MAC использует
+  live reader reference; проверки перед L2 Open сравнивают значение поколения
+  и актуальные binding/installed ports. Изменение подписок B не является отказом A.
+- ReflectionMACs проверяет соединение и Chassis перед чтением AddressSet.
+  Только отсутствие строки AddressSet/подписки получает отдельную
+  `ErrReflectionAddressSetNotFound` (также wraps `table.ErrNotFound`). Это локальная
+  ошибка: ProtectAndOpen не вызывается, VPC закрывается/withdraw, retry сохраняется.
+  Отсутствие Chassis с тем же исходным ErrNotFound остаётся общей ошибкой.
+- Shared read timeout/cancellation проходит независимый common probe даже до
+  исчерпания всего VPC budget. При успешном probe закрывается только VPC,
+  подтверждённая общая ошибка по-прежнему запускает общий Fence/Sweep.
+- Scoped budgets, pending closure retries, final cleanup context, barrier,
+  reflection/ND, subnet routes и отсутствие локального BGP сохранены.
+
+Полная таблица источников ошибок и действий:
+[reconcile-timeouts.md](reconcile-timeouts.md#подписки-и-ошибки-reflection).
+Изменены `pkg/ovs/ovn-sb-local-bindings.go`, daemon reconciliation/snapshot/MAC
+read call sites, их regression tests и documentation. API/CRD/charts не менялись.
+
+## Проверки этого этапа
+
+| Проверка | Результат |
+| --- | --- |
+| Полный `make lint` | PASS: gen-crd/verify-crd, golangci-lint 2.15.0 (0 issues), modernize; Linux target, Go 1.27.4, host-native generators; без обхода verify-crd |
+| Linux daemon test compilation | PASS для linux/amd64; включает новые fixtures/tests, это не выполнение тестов |
+| Portable OpenPERouter race suites | PASS `go test -race ./pkg/openperouter/... -count=1` на macOS; Linux-only daemon/host tests этим не покрываются |
+| Новые SB classification regressions и прежние daemon timeout/snapshot/isolation | BLOCKED: запуск на 10.64.244.143 не состоялся из-за SSH `Permission denied (publickey,password)` для прежней учётной записи и ключей агента; локальный Docker engine также недоступен |
+| Новый AddressSet kernel component | Добавлен сценарий реальных SB reads + production Fence/Closed/Withdraw с проверкой links/routes/guards A; НЕ ВЫПОЛНЕН по той же причине |
+| Полный make ut / E2E / Cisco/KubeVirt / packet tests | Не запускались |
+| gofmt / git diff --check / git diff --cached --check | PASS; index не изменён |
+
+Новые тесты используют in-memory SB OVSDB (на основе существующих repository
+fixtures): реальные subscription replacement/Chassis/AddressSet reads проходят
+через тот же `once` error boundary, что production `runOpenPERouter`. Покрываются
+add/remove B между snapshot/Open A, старый reader закрыт/новый читается, missing
+AddressSet и восстановление строки, реальная смена соединения/Chassis, disconnect,
+Chassis ErrNotFound, read timeout до и на границе VPC budget. Kernel fixture
+дополнена реальным отсутствующим AddressSet с проверкой сохранения A.
+Содержание тестов описывает предназначенное покрытие, **не успешный прогон**.
+
+Локальные логи/manifest: `results/failure-classification-20261125/` под существующим
+gitignore. Разрешённый Go-only payload передан в lab до отказа последующего SSH;
+это не выполнение тестов. Вопрос о рабочей учётной записи отправлен пользователю.
+Commit/push, изменения живого кластера, OpenPERouter и deployment automation
+не выполнялись. Проверки источников не являются атомарной транзакцией между
+API/SB/OVS/Linux; новое изменение после последнего live check остаётся возможным.
+Внешние FRR/attachment-only lifecycle/PE defaults и полная Cisco/KubeVirt
+приёмка остаются вне подтверждённых свойств этого исправления.
+
+---
+
 # Изоляция timeout VPC: 2026-11-24
 
 База: `openperouter@1af7a97729db56c2203b2ddee3064ad9d998b0ca` плюс текущие

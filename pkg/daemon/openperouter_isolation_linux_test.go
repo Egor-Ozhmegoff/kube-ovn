@@ -166,6 +166,33 @@ func TestOpenPERouterScopedFailureLinux(t *testing.T) {
 	require.Contains(t, isolationIP(t, "-n", "isolation-pe", "route", "show", "table", "23001"), "10.1.0.0/24")
 	require.NotContains(t, isolationIP(t, "-n", "isolation-pe", "route", "show", "table", "23002"), "10.2.0.0/24")
 	isolationIP(t, "-n", "isolation-pe", "link", "set", b.Device, "up")
+	// Missing SB protection is a VPC-local fault, through real monitored reads.
+	sb := newReflectionSBFixture(t)
+	sb.addSet(t, "a")
+	reader := sb.reader(t, "a", "b")
+	require.NoError(t, m.Reconcile(t.Context(), b, nil))
+	isolationIP(t, "link", "set", "path-b", "up")
+	require.NoError(t, runOpenPERouterIsolation(t.Context(), vpcs, func(vpc *kubeovnv1.Vpc) error {
+		if _, err := openPERouterReflectionMACs(t.Context(), reader, vpc.Name); err != nil {
+			return err
+		}
+		return m.Reconcile(t.Context(), configs[vpc.Name], nil)
+	}, func(ctx context.Context, uid string) error { return c.closeOpenPERouterVPC(ctx, uid, guards, m) }))
+	require.Contains(t, isolationIP(t, "-n", "isolation-pe", "route", "show", "table", "23001"), "10.1.0.0/24")
+	require.NotContains(t, isolationIP(t, "-n", "isolation-pe", "route", "show", "table", "23002"), "10.2.0.0/24")
+	for _, uid := range []string{"a", "b"} {
+		link, err := netlink.LinkByName("path-" + uid)
+		require.NoError(t, err)
+		require.Equal(t, uid == "a", link.Attrs().Flags&net.FlagUp != 0)
+		registration := guards.joined[types.UID(uid)]
+		_, state, err := registration.store.Read(t.Context())
+		require.NoError(t, err)
+		expected := barrier.Closed
+		if uid == "a" {
+			expected = barrier.Active
+		}
+		require.Equal(t, expected, state.Members["node"].Phase)
+	}
 	// Failed fencing must still attempt B withdrawal, never report Closed for A.
 	require.NoError(t, m.Reconcile(t.Context(), b, nil))
 	rows.fail = errors.New("OVS snapshot unavailable")

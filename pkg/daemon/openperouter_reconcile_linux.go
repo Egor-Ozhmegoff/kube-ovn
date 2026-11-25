@@ -135,7 +135,9 @@ func (r *openPERouterReconciler) cycle(ctx context.Context) error {
 			return ctx.Err()
 		}
 		var shared *openPERouterSharedError
-		if errors.As(err, &shared) && (!timedOut || (!errors.Is(shared.err, context.DeadlineExceeded) && !errors.Is(shared.err, context.Canceled))) {
+		sharedFailure := errors.As(err, &shared)
+		ambiguous := sharedFailure && (errors.Is(shared.err, context.DeadlineExceeded) || errors.Is(shared.err, context.Canceled))
+		if sharedFailure && !ambiguous {
 			return err
 		}
 		if err != nil {
@@ -145,7 +147,7 @@ func (r *openPERouterReconciler) cycle(ctx context.Context) error {
 		// A deadline while consulting a common source is ambiguous. Probe shared
 		// state with its own full budget; do not call it a cluster failure merely
 		// because this VPC had no time left, or hide a real infrastructure outage.
-		if timedOut {
+		if timedOut || ambiguous {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

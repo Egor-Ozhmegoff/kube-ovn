@@ -26,7 +26,7 @@ type openPERouterSnapshot struct {
 	keep, guardNames      []string
 	bootstrap             *openperouter.Bootstrap
 	nodeUID               types.UID
-	reader                *ovs.LocalBindingClient
+	generation            ovs.LocalBindingGeneration
 	bound                 map[string]ovnsb.PortBinding
 	installed             map[string]bool
 }
@@ -110,7 +110,9 @@ func (c *Controller) completeOpenPERouterSnapshot(ctx context.Context, s *openPE
 		return errors.New("OpenPERouter node identity changed during snapshot")
 	}
 	s.bound, s.installed, err = c.openPERouterBindings(ctx, reader, s.guardNames...)
-	s.reader = *reader
+	if err == nil {
+		s.generation = (*reader).Generation()
+	}
 	return err
 }
 
@@ -154,14 +156,24 @@ func (c *Controller) checkOpenPERouterSnapshot(ctx context.Context, expected *op
 	if err != nil {
 		return &openPERouterSharedError{err: err}
 	}
-	return validateOpenPERouterSnapshot(expected, current, vpc, c.config.NodeName)
+	return adoptOpenPERouterSnapshot(expected, current, vpc, c.config.NodeName)
+}
+
+func adoptOpenPERouterSnapshot(expected, current *openPERouterSnapshot, vpc *kubeovnv1.Vpc, nodeName string) error {
+	if err := validateOpenPERouterSnapshot(expected, current, vpc, nodeName); err != nil {
+		return err
+	}
+	// Validation proves the current VPC is unchanged. Adopt its fresh snapshot
+	// and subscriptions. MAC reads follow the live reader reference, not a copy.
+	*expected = *current
+	return nil
 }
 
 func validateOpenPERouterSnapshot(expected, current *openPERouterSnapshot, vpc *kubeovnv1.Vpc, nodeName string) error {
 	if !sameOpenPERouterNetworks(expected, current, vpc.UID) {
 		return errors.New("OpenPERouter VPC/subnet configuration changed before Open")
 	}
-	if expected.nodeUID != current.nodeUID || expected.reader != current.reader || expected.bootstrap.Index != current.bootstrap.Index || expected.bootstrap.RouterMAC != current.bootstrap.RouterMAC {
+	if expected.nodeUID != current.nodeUID || expected.generation != current.generation || expected.bootstrap.Index != current.bootstrap.Index || expected.bootstrap.RouterMAC != current.bootstrap.RouterMAC {
 		return &openPERouterSharedError{err: errors.New("OpenPERouter node/OVN connection generation changed before Open")}
 	}
 	if err := current.bootstrap.Validate(vpc.Spec.OpenPERouter); err != nil {
@@ -192,12 +204,26 @@ func (c *Controller) checkOpenPERouterDataplane(ctx context.Context, expected *o
 	if err != nil {
 		return &openPERouterSharedError{err: err}
 	}
-	if *reader != expected.reader {
+	return validateOpenPERouterDataplane(expected, vpc, *reader, bound, installed, c.config.NodeName)
+}
+
+func validateOpenPERouterDataplane(expected *openPERouterSnapshot, vpc *kubeovnv1.Vpc, reader *ovs.LocalBindingClient, bound map[string]ovnsb.PortBinding, installed map[string]bool, nodeName string) error {
+	if reader.Generation() != expected.generation {
 		return &openPERouterSharedError{err: errors.New("OVN connection generation changed before L2 Open")}
 	}
-	node, err := openperouter.BuildNode(vpc.Name, c.config.NodeName, expected.bootstrap.Index, vpc.Spec.OpenPERouter)
+	node, err := openperouter.BuildNode(vpc.Name, nodeName, expected.bootstrap.Index, vpc.Spec.OpenPERouter)
 	if err != nil {
 		return err
 	}
 	return openPERouterReturnReady(node.ReturnPort, bound, installed)
+}
+
+// A missing per-subnet row is not evidence that the common SB service failed.
+// The read itself checks live connectivity before consulting the monitored row.
+func openPERouterReflectionMACs(ctx context.Context, reader *ovs.LocalBindingClient, name string) ([]string, error) {
+	macs, err := reader.ReflectionMACs(ctx, name)
+	if err == nil || errors.Is(err, ovs.ErrReflectionAddressSetNotFound) {
+		return macs, err
+	}
+	return nil, &openPERouterSharedError{err: err}
 }

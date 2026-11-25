@@ -42,7 +42,7 @@ func TestOpenPERouterFreshSnapshotGate(t *testing.T) {
 			case "node-generation":
 				fresh.nodeUID = "new-node"
 			case "reader-generation":
-				fresh.reader = new(ovs.LocalBindingClient)
+				fresh.generation = ovs.LocalBindingGeneration{Epoch: 1}
 			case "status-counter-only":
 				fresh.subnets[0].ResourceVersion = "new-rv"
 				fresh.vpcs[0].ResourceVersion = "new-rv"

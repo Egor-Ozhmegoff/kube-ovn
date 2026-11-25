@@ -129,7 +129,7 @@ func (c *Controller) openPERouterReconciler(manager routes.Manager, reader **ovs
 			}
 			check := func() error { return c.checkOpenPERouterSnapshot(ctx, snapshot, current, reader, guards) }
 			checkL2 := func() error { return c.checkOpenPERouterDataplane(ctx, snapshot, current, reader) }
-			err := c.syncOpenPERouterVPC(ctx, manager, current, snapshot.subnets, snapshot.bootstrap, guards, snapshot.reader, snapshot.bound, snapshot.installed, check, checkL2)
+			err := c.syncOpenPERouterVPC(ctx, manager, current, snapshot.subnets, snapshot.bootstrap, guards, reader, snapshot.bound, snapshot.installed, check, checkL2)
 			klog.InfoS("OpenPERouter VPC reconciliation timing", "vpc", vpc.Name, "duration", time.Since(started), "stages", timing.Snapshot(), "error", err)
 			return err
 		},
@@ -150,7 +150,7 @@ func (c *Controller) closeOpenPERouterVPC(ctx context.Context, uid string, guard
 	return errors.Join(fenceErr, guardErr, manager.Withdraw(ctx, uid))
 }
 
-func (c *Controller) syncOpenPERouterVPC(ctx context.Context, manager routes.Manager, vpc *kubeovnv1.Vpc, subnets []*kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, reader *ovs.LocalBindingClient, bound map[string]ovnsb.PortBinding, installed map[string]bool, fresh, freshL2 func() error) error {
+func (c *Controller) syncOpenPERouterVPC(ctx context.Context, manager routes.Manager, vpc *kubeovnv1.Vpc, subnets []*kubeovnv1.Subnet, bootstrap *openperouter.Bootstrap, guards *openPERouterGuards, reader **ovs.LocalBindingClient, bound map[string]ovnsb.PortBinding, installed map[string]bool, fresh, freshL2 func() error) error {
 	if err := c.registerOpenPERouterGuards(ctx, guards, vpc, subnets); err != nil {
 		return err
 	}
@@ -200,9 +200,9 @@ func (c *Controller) syncOpenPERouterVPC(ctx context.Context, manager routes.Man
 			if subnet.Spec.Vpc != vpc.Name || subnet.Spec.OpenPERouterL2 == nil || !subnet.DeletionTimestamp.IsZero() || !subnet.Status.IsReady() {
 				continue
 			}
-			macs, err := reader.ReflectionMACs(ctx, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
+			macs, err := openPERouterReflectionMACs(ctx, *reader, openperouter.ReflectionAddressSet(string(subnet.UID), subnet.Name))
 			if err != nil {
-				return &openPERouterSharedError{err: err}
+				return err
 			}
 			if err := c.ensureAcknowledgedL2(ctx, vpc, subnet, bootstrap, guards, macs, func() error {
 				if err := freshL2(); err != nil {
@@ -255,16 +255,8 @@ func (c *Controller) openPERouterBindings(ctx context.Context, reader **ovs.Loca
 	if len(roots) != 1 {
 		return nil, nil, errors.New("expected one local Open_vSwitch row")
 	}
-	if *reader != nil && !(*reader).Matches(roots[0].ExternalIDs["ovn-remote"], roots[0].ExternalIDs["system-id"], guardNames...) {
-		(*reader).Close()
-		*reader = nil
-	}
-	if *reader == nil {
-		client, err := ovs.NewLocalBindingClient(ctx, roots[0].ExternalIDs["ovn-remote"], roots[0].ExternalIDs["system-id"], guardNames...)
-		if err != nil {
-			return nil, nil, err
-		}
-		*reader = client
+	if err := ovs.RefreshLocalBindingClient(ctx, reader, roots[0].ExternalIDs["ovn-remote"], roots[0].ExternalIDs["system-id"], guardNames...); err != nil {
+		return nil, nil, err
 	}
 	bound, err := (*reader).BoundPorts(ctx)
 	if err != nil {
