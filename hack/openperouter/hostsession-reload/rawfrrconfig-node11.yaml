@@ -1,0 +1,34 @@
+# Negative experiment only. Normal FRR reload fails; do not deploy.
+# Kubernetes CR for an external configuration owner, not native static input.
+apiVersion: network.openperouter.io/v1alpha1
+kind: RawFRRConfig
+metadata:
+  name: hostsession-contract-node11
+spec:
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/hostname: node-a
+  priority: 100
+  rawConfig: |
+    ip prefix-list OVN_SUBNET4 seq 10 permit 10.101.3.0/24
+    ipv6 prefix-list OVN_SUBNET6 seq 10 permit fd00:3::/64
+    route-map OVN_SUBNET4 permit 10
+     match ip address prefix-list OVN_SUBNET4
+     match metric 8399656
+    exit
+    route-map OVN_SUBNET6 permit 10
+     match ipv6 address prefix-list OVN_SUBNET6
+     match metric 8399656
+    exit
+    router bgp 64514 vrf tenant-a
+     no neighbor 169.254.16.13
+     no neighbor fd00:16::d
+     address-family ipv4 unicast
+      no network 169.254.16.13/32
+      redistribute kernel route-map OVN_SUBNET4
+     exit-address-family
+     address-family ipv6 unicast
+      no network fd00:16::d/128
+      redistribute kernel route-map OVN_SUBNET6
+     exit-address-family
+    exit

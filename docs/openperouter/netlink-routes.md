@@ -147,12 +147,22 @@ hostSessionCIDRs не включает BGP. ASN поля предыдущей д
 сохраняют API_SERVER_HOST/PORT overrides и прежние defaults вне opt-in режима.
 
 OpenPERouter `Mac_setings_for_l2vni_and_l3vni@60a1285935b10eb0b1cf07e4533faefedde3d4d3`
-по-прежнему не имеет независимого от hostSession non-BGP L3 veth lifecycle:
+использует hostSession и для veth, и для генерации локального BGP:
 `internal/conversion/host_conversion.go:l3vniToHost` без HostSession не задаёт
 LinkIPs, `internal/hostnetwork/vni.go:SetupL3VNI` пропускает setupHostVeth.
-Текущий runtime отвергает legacy hostSession. Local metadata не создаёт veth
-и не является предлагаемым native API. Нужен отдельный внешний контракт;
-его имя/наличие здесь не выдумываются. Другие репозитории не меняются.
+Ветка уже имеет RawFRRConfig, добавляемый после tenant BGP. Проверен вариант:
+сохранить hostSession для veth, завершающими `no neighbor`/`no network` убрать
+сгенерированный BGP и добавить filtered kernel redistribution. Наличие
+hostSession само по себе не доказывает наличие соседа в effective runtime.
+Однако FRR 10.6.0 вернул ошибку во всех шести штатных reload: AF-команды
+повторно применяются после удаления соседа. Поэтому текущая валидация остаётся
+консервативной и отклоняет hostSession; положительный контракт не подтверждён.
+Local metadata не создаёт veth и не может устранить этот отказ. Обязательность
+нового attachment-only API из этого не следует: нужен проверенный совместимый
+механизм в рамках внешнего владельца. Другие репозитории не меняются.
+Исходники, native hostSession, RawFRRConfig payload и команды воспроизведения:
+[hostsession-reload](../../hack/openperouter/hostsession-reload/README.md).
+Его файлы — отрицательный эксперимент, не готовый bootstrap.
 
 FRR 10.6.0 классифицирует protocol 203 как `kernel`. Реальный lab показал:
 Linux priority `0x4cXXXXXX` zebra отображает как **distance 76**, metric

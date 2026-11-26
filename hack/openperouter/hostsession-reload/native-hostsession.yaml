@@ -1,0 +1,14 @@
+# Candidate input fragment only; trailing RawFRRConfig FAILS normal reload.
+# Never combine this with the reference bootstrap as a validated deployment.
+l3vnis:
+  - name: tenant-a
+    vrf: tenant-a
+    vni: 10001
+    hostSession:
+      asn: 64514
+      hostASN: 64515
+      localCIDRs:
+        - 169.254.16.0/20
+        - fd00:16::/64
+# See raw.conf for index 11's RawFRRConfig rawConfig payload. The original
+# renderer, before.conf and after.conf show its exact placement and result.

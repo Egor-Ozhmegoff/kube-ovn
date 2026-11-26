@@ -1,8 +1,9 @@
 # Интеграция с OpenPERouter: выбранная версия
 
 Текущая реализация заменяет локальный GoBGP и per-endpoint IP routes на [маршруты OVN-подсетей](netlink-routes.md).
-MAC-ветка пока не создаёт L3 attachment без hostSession/BGP; совместный
-запуск заблокирован до отдельного native контракта. SIGKILL withdrawal требует
+MAC-ветка создаёт L3 attachment через hostSession; вариант удаления его BGP
+через RawFRRConfig не прошёл штатный reload. Совместный запуск пока заблокирован,
+но необходимость нового API из этого не следует. SIGKILL withdrawal требует
 внешнего механизма. Приведённые ниже deployment/scaling результаты исторические.
 
 

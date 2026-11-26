@@ -86,8 +86,9 @@ Return binding/installed OVS VIF, actual VRF/veth и routes проверяютс
 
 [Ownership, безопасный переход, FRR и ограничения](netlink-routes.md).
 Startup в закрытом состоянии очищает старую reserved endpoint signature.
-Текущая MAC-ветка OpenPERouter ещё требует внешнего attachment-only контракта
-без hostSession/BGP; наличие локальной metadata его не заменяет.
+Текущая MAC-ветка требует проверенного внешнего контракта attachment без
+локального BGP-пиринга. Вариант hostSession + RawFRRConfig не прошёл штатный
+reload; metadata его не заменяет. Новый API не является обязательным выводом.
 
 ## Внешний L2
 
@@ -271,8 +272,9 @@ fabric MTU − native EVPN overhead). Native host-veth MTU также прове
 
 ## Блокеры и неподтверждённые свойства
 
-Для текущего non-BGP runtime требуется отсутствующий native L3 attachment-only
-контракт. Точные conversion/setup функции и граница внешнего изменения —
+Для текущего non-BGP runtime пока не подтверждён совместимый native L3 attachment
+контракт: сохранение hostSession с завершающим RawFRRConfig даёт ошибку reload.
+Точные conversion/setup функции и результат проверки существующего механизма —
 в [netlink-routes.md](netlink-routes.md#bootstrap-и-внешний-frr-контракт).
 
 1. **PE unreachable defaults — отложенная зависимость OpenPERouter.** В выбранном

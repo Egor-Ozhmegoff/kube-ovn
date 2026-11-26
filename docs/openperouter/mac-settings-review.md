@@ -57,7 +57,8 @@ systemd bootstrap читает node-local configuration до Kubernetes API.
 * Наличие MAC настроек не создаёт management LSP/host VRF и локальный egress
   для Kube-OVN shared distributed router.
 * OpenPERouter сам не получает OVN workload prefixes. Kube-OVN пишет routed subnet routes (без L2VNI и per-endpoint routes),
-  но для запуска нужен отсутствующий независимый от hostSession L3 attachment API
+  но совместимый L3 attachment без локального BGP пока не подтверждён:
+  hostSession + RawFRRConfig провалил штатный reload
   (см. [netlink-routes.md](netlink-routes.md)).
 * Не найден готовый контракт local MAC/IP ownership и split-horizon между
   внутренним OVN VXLAN и внешним EVPN. Наивное подключение localnet на всех

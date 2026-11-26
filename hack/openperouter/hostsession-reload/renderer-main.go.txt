@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/openperouter/openperouter/internal/frr"
+	"github.com/openperouter/openperouter/internal/ipam"
+	nlp "github.com/openperouter/openperouter/internal/networklayerprotocol"
+)
+
+func main() {
+	if len(os.Args) != 2 {
+		panic("output directory required")
+	}
+	addresses, err := ipam.VethIPsFromPool([]string{"169.254.16.0/20", "fd00:16::/64"}, 11)
+	if err != nil {
+		panic(err)
+	}
+	hostASN, err := frr.NewPeerASN(new(int64(64515)), nil)
+	if err != nil {
+		panic(err)
+	}
+	externalASN, err := frr.NewPeerASN(new(int64(64512)), nil)
+	if err != nil {
+		panic(err)
+	}
+	cfg := frr.Config{Loglevel: "informational", Underlay: frr.UnderlayConfig{MyASN: 64514, RouterID: "192.0.2.1", Neighbors: []frr.NeighborConfig{{ID: "192.0.2.2", Addr: "192.0.2.2", ASN: externalASN, NetworkLayerProtocols: []nlp.NLP{{AFI: nlp.IPv4, SAFI: nlp.Unicast}, {AFI: nlp.L2VPN, SAFI: nlp.EVPN}}}}}}
+	for i, addr := range []string{addresses.Ipv4.HostSide.IP.String(), addresses.Ipv6.HostSide.IP.String()} {
+		vni := frr.L3VNIConfig{ASN: 64514, VRF: "tenant-a", VNI: 10001, RouterID: "192.0.2.1", LocalNeighbor: &frr.NeighborConfig{ID: addr, Addr: addr, ASN: hostASN}}
+		if i == 0 {
+			vni.ToAdvertiseIPv4 = []string{addr + "/32"}
+		} else {
+			vni.ToAdvertiseIPv6 = []string{addr + "/128"}
+		}
+		cfg.L3VNIs = append(cfg.L3VNIs, vni)
+	}
+	write := func(name string) {
+		if err := frr.ApplyConfig(context.Background(), &cfg, func(_ context.Context, s string) error {
+			return os.WriteFile(filepath.Join(os.Args[1], name), []byte(strings.Replace(s, "hostname "+cfg.Hostname, "hostname hostsession-lab", 1)), 0600)
+		}); err != nil {
+			panic(err)
+		}
+	}
+	write("before.conf")
+	raw, err := os.ReadFile(filepath.Join(os.Args[1], "raw.conf"))
+	if err != nil {
+		panic(err)
+	}
+	cfg.RawConfig = []frr.RawFRRSnippet{{Config: string(raw)}}
+	write("after.conf")
+}

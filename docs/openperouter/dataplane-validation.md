@@ -1,5 +1,6 @@
-> Для текущего subnet-route runtime сначала устранить внешний blocker attachment-only
-> API OpenPERouter. Новые выполненные component/kernel tests и skips перечислены
+> Для текущего subnet-route runtime сначала подтвердить внешний attachment/FRR
+> контракт: вариант hostSession + RawFRRConfig провалил штатный reload.
+> Новые выполненные component/kernel tests и skips перечислены
 > в [validation-results.md](validation-results.md); исторические прогоны ниже
 > не подтверждают новую реализацию. Контракт routes/FRR: [netlink-routes.md](netlink-routes.md).
 

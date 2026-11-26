@@ -1,9 +1,14 @@
 # Исходные данные двухнодового примера
 
-**Переход на netlink:** примеры теперь требуют native L3 attachment без BGP.
-В закреплённой MAC-ветке такого API нет; удаление `hostSession` само по себе
-не создаёт veth. Это целевая конфигурация после внешней доработки, а не готовый
-bootstrap. `kube-ovn-attachments.yaml` — только метаданные Kube-OVN.
+**Переход на netlink:** требуется native L3 attachment без локального BGP-пиринга.
+Удаление `hostSession` в закреплённой MAC-ветке не создаёт veth. Существующий
+RawFRRConfig позволяет попробовать сохранить hostSession и удалить его BGP,
+но проверенный вариант провалил штатный reload FRR 10.6.0 (6/6).
+Это целевая конфигурация, а не готовый bootstrap. Новый attachment-only API
+не является обязательным выводом; совместимый механизм пока не подтверждён.
+`kube-ovn-attachments.yaml` — только метаданные Kube-OVN.
+Native hostSession и завершающая RawFRRConfig policy показаны в
+[отрицательном воспроизводителе](../../../hack/openperouter/hostsession-reload/README.md).
 Читайте [порядок перехода и ограничения](../netlink-routes.md).
 
 

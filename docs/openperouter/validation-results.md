@@ -1,3 +1,115 @@
+# Проверка hostSession + RawFRRConfig: 2026-11-25
+
+База Kube-OVN: `openperouter@ff59ff64217543cd494c55888afe43bd02d2ce19`.
+OpenPERouter изучен только чтением закреплённого commit
+`60a1285935b10eb0b1cf07e4533faefedde3d4d3` MAC-ветки. В начале его checkout был
+`unreachable-route@f4da8a3e19e491748672a09e6f4e0bdfcbec134e` с восемью чужими
+изменениями; их не редактировали. На финальной проверке HEAD уже
+`8d1277f6fef5e05a07ecdafb7e15879e2db30ddc`, дерево чистое: это изменение вне
+команд данной работы. Проверка контракта остаётся привязана к `60a12859…`.
+Kube-OVN tracked runtime/API/CRD/charts не изменялись.
+
+## Результат обязательного compatibility gate
+
+**Предложенный контракт не прошёл штатный FRR reload. Валидация hostSession
+не ослаблена; исправленная совместимость не заявляется.**
+
+Native `hostSession` задаёт адреса L3 veth и одновременно генерирует локальных
+соседей с attachment /32 и /128. RawFRRConfig действительно добавляется после
+tenant BGP. Вариант с завершающими `no neighbor` и `no network` проверен
+через оригинальный renderer/IPAM закреплённого исходника и FRR 10.6.0:
+
+| Режим | --test ×3 | --reload ×3 |
+| --- | --- | --- |
+| Cold boot candidate → repeated reload | 0, 0, 0 | **1, 1, 1** |
+| Generated positive controls → candidate reload | 0, 0, 0 | **1, 1, 1** |
+
+Повтор с текущими checked-in fixtures дал те же шесть ошибок. Сообщение FRR:
+`Specify remote-as or peer-group commands first` на `neighbor ... activate`
+и route-map командах. Desired file содержит сгенерированные положительные
+AF-команды и завершающее удаление соседа; reloader повторно применяет AF-команды
+после удаления peer. `internal/frrconfig/frrconfig.go:Update` возвращает этот
+ненулевой статус, поэтому частично правильный runtime не означает успешный
+reconcile OpenPERouter. Это конкретный блокер предложенного механизма,
+а не доказательство обязательности нового attachment-only API.
+
+После reload и restart снятые running-config не содержат локальных соседей
+и attachment network statements, сохраняют внешнего соседа и filtered kernel
+redistribution. Положительный контроль до изменения содержит attachment
+network/BGP RIB записи. В повторном cold-start первом RIB-снимке ещё присутствует
+`169.254.16.13/32`, хотя running-config уже не содержит его network statement;
+в следующих снимках запись отсутствует. Время сходимости и transient exports
+не установлены. Проверяющий скрипт возвращает **FAIL**, включая эту запись.
+
+## Изменения и воспроизведение
+
+Завершён [воспроизводитель](../../hack/openperouter/hostsession-reload/README.md):
+native hostSession, RawFRRConfig CR/payload, original renderer harness,
+генератор fixtures из временной копии commit, два режима FRR и checker.
+Checker отклоняет ненулевой reload даже при желаемом sampled runtime.
+Обновлены текущие architecture/bootstrap документы: новый API не объявляется
+обязательным; metadata не заменяет veth и не доказывает отсутствие BGP.
+
+Повторная генерация `before.conf`/`after.conf` побайтно совпала с fixtures.
+`bash -n` прошёл. Новый FRR-прогон выполнен на **10.64.244.143** только в новых
+`--rm --privileged --network none` контейнерах, без host netns mounts.
+Логи обоих режимов и снимки сохранены в игнорируемом
+`results/hostsession-rawfrr-20261125/results/`. Код выхода run.sh — **1**,
+это отрицательный compatibility result, а не провал сбора логов.
+
+## Финальные проверки этой работы
+
+| Проверка | Результат и границы |
+| --- | --- |
+| Полный `make lint` | **PASS**, Go 1.27.4, Linux target, host-native controller-gen/modernize; штатные gen-crd и verify-crd, golangci-lint 2.15.0: **0 issues**, modernize без замечаний |
+| Original renderer + IPAM | **PASS**, временная копия закреплённого исходника; оба fixtures побайтно совпадают после нормализации hostname |
+| FRR cold/reload/restart | **FAIL compatibility**, шесть test=0/reload=1; состояние после restart снято, успешным reconcile не считается |
+| Linux daemon race | **PASS**, `go test -race ./pkg/daemon -run OpenPERouter -count=1`: snapshot/classification/timeout regressions; opt-in kernel test отдельно ниже |
+| Linux OpenPERouter и OVSDB client race | **PASS**, `go test -race ./pkg/openperouter/... ./pkg/ovsdb/client -count=1`; opt-in privileged host/packet tests этим запуском не включались |
+| Linux OVS race | **PASS**, `go test -race ./pkg/ovs -run 'LocalBinding\|Reflection\|RARP\|Chassis' -count=1` |
+| Kernel scoped-failure component | **PASS**, `KUBE_OVN_SUBNET_ISOLATION_LAB=true go test -race ./pkg/daemon -run '^TestOpenPERouterScopedFailureLinux$' -count=1 -v`; privileged network-none container, реальные links/routes/guards и SB reads, OVS rows stubbed |
+| Source identity | **PASS**, SHA256 всех tracked Go-файлов pkg/versions и go.mod/go.sum совпали с ранее разрешённой Linux-копией перед тестами |
+| Shell/fixtures/diff | **PASS**, bash -n, RawFRRConfig payload совпадает с raw.conf, gofmt; обе git diff --check |
+| Полный make ut / Cisco/KubeVirt E2E | Не запускались в этой работе |
+
+Linux tests выполнялись с read-only исходниками и `GOPROXY=off`, без сети
+контейнера. Коды завершения финальных race/component команд — 0.
+Логи `race-final.log`, `component.log`, `make-lint.log`, source SHA256 и renderer
+log сохранены рядом с FRR results под gitignore. Сообщения о локальном отказе
+B в component.log ожидаемы: это проверяемые fault injections.
+
+Первые технические попытки не были успешными: неверный shell entrypoint образа
+дал exit 126; initial modernize через launcher Go 1.26 не разобрал Go 1.27
+stdlib. Явный `/bin/sh` entrypoint и прямой Go 1.27.4 с host-native инструментами
+устранили эти ошибки запуска; repository dependencies и runtime не менялись.
+CRD generation внутри make lint не дала drift, отдельная генерация clients
+не требовалась. Новые файлы воспроизводителя остаются untracked, staging нет.
+
+## Непроверенное и deployment
+
+Этот probe создаёт dummy attachment исключительно для FRR/RIB контроля.
+Native hostSession veth lifecycle, реальное установление внешнего BGP,
+IPv4/IPv6 kernel redistribution/withdrawal подсетей и component dataplane
+не подтверждены этим экспериментом. Наличие внешнего neighbor в конфигурации
+не доказывает Established. Полная Cisco/KubeVirt приёмка не выполнялась.
+Заявлять положительные hostSession-validation/component тесты до успешного
+reload gate нельзя; существующий запрет и metadata contract сохранены.
+
+Deployment-репозиторий не менялся. До подтверждения совместимого внешнего
+контракта **не включать** этот RawFRRConfig как проверенное решение. Для будущего
+перехода нужны согласованные `openperouter.enabled`, `openperouter.bootstrapDir`
+и `openperouter.namespacePath` в обоих charts и `networking.API_SERVER_HOST` /
+`networking.API_SERVER_PORT`, если API
+зависит от CNI. Внешний владелец должен обеспечить per-node
+addressing, отсутствие локального BGP, prefix+metric export allowlist и import
+policy против фабричных копий локальных routed CIDR. Остановить старые BGP
+publishers/закрыть attachments до запуска subnet-route runtime. Безопасный
+mixed-version rolling upgrade не подтверждён. PE defaults и VXLAN dataplane
+остаются вне этого изменения. Commit/push, staging, изменения живого кластера,
+OpenPERouter и автоматизации не выполнялись.
+
+---
+
 # Классификация SB/reflection отказов: 2026-11-25
 
 База: `openperouter@674bc608b4725898385aa63269d86d227944bc9c`. Перед началом

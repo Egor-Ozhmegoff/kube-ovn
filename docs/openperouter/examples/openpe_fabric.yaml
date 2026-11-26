@@ -1,5 +1,6 @@
 # Netlink transition reference: NOT deployable with the pinned MAC branch alone.
-# A native non-BGP L3 veth lifecycle is required; see ../netlink-routes.md.
+# A validated native L3 veth without local BGP peering is required.
+# Existing hostSession + RawFRRConfig failed reload; see ../netlink-routes.md.
 # Native OpenPERouter static input for the pinned source, NOT a Kube-OVN CR.
 # Requires Mac_setings_for_l2vni_and_l3vni@60a1285935b10eb0b1cf07e4533faefedde3d4d3.
 # Experimental lab fixture; not deployed by Kube-OVN.
